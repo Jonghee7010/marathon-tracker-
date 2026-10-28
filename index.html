@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>크루 마라톤 라이브 트래커</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1a1d23;--mu:#6b7280;--bd:#e3e6ea;--ac:#e8421f}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2026;--tx:#eceef1;--mu:#98a0ab;--bd:#2d3139;--ac:#ff6a47}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;font-size:14px;display:flex;flex-direction:column}
+header{padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header b{font-size:16px}
+.clock{font-variant-numeric:tabular-nums;font-weight:700}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+main{flex:1;display:flex;min-height:0}
+#map{flex:1;min-height:300px;position:relative}
+.ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:var(--mu);line-height:1.6}
+aside{width:340px;max-width:45vw;overflow:auto;background:var(--card);border-left:1px solid var(--bd)}
+.ri{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--bd);cursor:pointer}
+.ri:hover{background:var(--bg)}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.nm{font-weight:600}
+.mu{color:var(--mu);font-size:12px}
+.tag{margin-left:auto;font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd);color:var(--mu);white-space:nowrap}
+.tag.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.tag.err{border-color:#c00;color:#c00}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px;width:min(580px,94vw);max-height:92vh;overflow:auto}
+dialog label{display:block;margin:10px 0 4px;font-weight:600;font-size:13px}
+dialog input,dialog textarea,dialog select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit}
+dialog textarea{height:130px;font-family:ui-monospace,monospace;font-size:13px}
+dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
+/* 지도 오버레이 */
+.mk{display:flex;align-items:center;gap:3px;cursor:pointer}
+.mk i{width:14px;height:14px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 0 3px #0008;flex:none}
+.mk.est i{animation:p 1.6s infinite}
+.mk span{font-size:11px;font-weight:700;background:#fffe;color:#111;border-radius:4px;padding:0 3px;white-space:nowrap;box-shadow:0 0 2px #0004}
+.mk.hl i{width:20px;height:20px}
+.mk.hl span{background:#ffe14d}
+.lbl-off .mk span{display:none}
+.cp{font-size:11px;background:#fff;color:#444;border:1px solid #aaa;border-radius:10px;padding:0 6px;white-space:nowrap;box-shadow:0 0 2px #0004}
+.cp.fin{background:#16a34a;color:#fff;border-color:#16a34a}
+@keyframes p{50%{box-shadow:0 0 0 7px #e8421f33}}
+@media (max-width:700px){main{flex-direction:column}aside{width:100%;max-width:none;height:40%;border-left:0;border-top:1px solid var(--bd)}}
+</style>
+</head>
+<body>
+<header>
+  <b>🏃 크루 라이브 트래커</b>
+  <span class="clock" id="clk">--:--:--</span>
+  <span class="mu" id="stat"></span>
+  <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="g" id="lbl">이름 숨기기</button>
+    <button class="g" id="refresh">지금 갱신</button>
+    <button id="cfg">설정 · 크루</button>
+  </span>
+</header>
+<main>
+  <div id="map"><div class="ph" id="ph">설정에서 카카오 JavaScript 키를 입력하면<br>지도가 표시됩니다.</div></div>
+  <aside id="list"></aside>
+</main>
+
+<dialog id="dlg">
+  <h3 style="margin:0 0 4px">설정</h3>
+
+  <label>카카오 JavaScript 키</label>
+  <input id="key" placeholder="JavaScript 키 (REST API 키 아님)" autocomplete="off">
+  <p class="help">
+    ① <b>developers.kakao.com</b> → 내 애플리케이션 → 앱 만들기<br>
+    ② 앱 설정 → 플랫폼 → <b>Web</b> 사이트 도메인에 이 페이지를 띄울 주소 등록<br>
+    &nbsp;&nbsp;&nbsp;(예: <code>https://내아이디.github.io</code>, 로컬 테스트는 <code>http://localhost:5500</code>)<br>
+    ③ 앱 키에서 <b>JavaScript 키</b> 복사<br>
+    ④ 제품 설정에 <b>카카오맵</b> 항목이 있으면 사용 설정을 켜기<br>
+    ⚠ 파일을 더블클릭해서(file://) 열면 도메인 등록이 안 되어 지도가 뜨지 않아요.
+  </p>
+
+  <label>크루 목록 (한 줄에 “이름, 배번”)</label>
+  <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
+  <label>대회 번호 (URL의 /133/ 부분)</label>
+  <input id="evt">
+  <label>기록 사이트 주소 (끝에 / 없이)</label>
+  <input id="base">
+  <label>CORS 프록시 (브라우저에서 직접 호출이 막힐 때)</label>
+  <select id="proxy">
+    <option value="https://corsproxy.io/?url=">corsproxy.io</option>
+    <option value="https://api.allorigins.win/raw?url=">allorigins</option>
+    <option value="">사용 안 함 (직접 호출 / 내 프록시 주소를 아래에)</option>
+  </select>
+  <input id="proxyCustom" placeholder="내 프록시 주소 (예: https://내워커.workers.dev/?url=)" style="margin-top:6px">
+  <label>갱신 주기 (초, 최소 30)</label>
+  <input id="intv" type="number" min="30">
+  <label>출발 후 5K 통과 전 가정 페이스 (분/km)</label>
+  <input id="dpace" type="number" step="0.1">
+  <label>코스 GPX 파일 (없으면 임시 코스 사용)</label>
+  <input id="gpx" type="file" accept=".gpx">
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+    <button id="save">저장하고 시작</button>
+    <button class="g" id="demo">데모 재생 (2025 기록 기반)</button>
+    <button class="g" id="close">닫기</button>
+  </div>
+  <p class="help">설정은 이 브라우저(localStorage)에 저장됩니다. 키를 바꾸면 페이지가 새로고침돼요.</p>
+</dialog>
+
+<script>
+/* ================= 설정/상태 ================= */
+const TOTAL=42.195;
+const $=id=>document.getElementById(id);
+const KM_OF={'출발':0,'도착':TOTAL};for(let k=5;k<=40;k+=5)KM_OF[k+'K']=k;
+let cfg={key:'',crew:'',evt:'133',base:'https://runable.myresult.co.kr',proxy:'https://corsproxy.io/?url=',proxyCustom:'',intv:60,dpace:6.5};
+try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}
+let runners=[],demo=null,timerPoll=null,focusBib=null,labels=true,map=null;
+
+/* ================= 시간 유틸 ================= */
+const toS=s=>{const[a,b,c]=s.split(':').map(Number);return a*3600+b*60+c};
+const fmt=s=>{s=Math.max(0,Math.round(s));return[Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(n=>String(n).padStart(2,'0')).join(':')};
+function kstNow(){const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());return toS(p)}
+function now(){return demo?demo.t:kstNow()}
+
+/* ================= 코스 ================= */
+let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
+let cum=[];
+function hav(a,b){const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function prep(){cum=[0];for(let i=1;i<route.length;i++)cum.push(cum[i-1]+hav(route[i-1],route[i]))}
+function posAt(km){
+  const d=Math.max(0,Math.min(TOTAL,km))/TOTAL*cum[cum.length-1];
+  let i=1;while(i<cum.length-1&&cum[i]<d)i++;
+  const t=(d-cum[i-1])/((cum[i]-cum[i-1])||1);
+  return[route[i-1][0]+(route[i][0]-route[i-1][0])*t,route[i-1][1]+(route[i][1]-route[i-1][1])*t];
+}
+
+/* ================= 카카오맵 ================= */
+const LL=p=>new kakao.maps.LatLng(p[0],p[1]);
+let routeObjs=[];
+function initMap(){
+  if(!cfg.key){$('ph').style.display='flex';return}
+  $('ph').innerHTML='지도 불러오는 중…';
+  const s=document.createElement('script');
+  s.src=`https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(cfg.key)}&autoload=false`;
+  s.onerror=()=>{$('ph').innerHTML='카카오 지도 SDK를 불러오지 못했어요.<br>키가 올바른지, 네트워크/광고차단 설정을 확인해 주세요.'};
+  s.onload=()=>kakao.maps.load(()=>{
+    $('ph').remove();
+    map=new kakao.maps.Map($('map'),{center:new kakao.maps.LatLng(37.54,126.95),level:8});
+    map.addControl(new kakao.maps.ZoomControl(),kakao.maps.ControlPosition.RIGHT);
+    drawRoute();render();
+  });
+  document.head.appendChild(s);
+}
+function drawRoute(){
+  if(!map)return;
+  routeObjs.forEach(o=>o.setMap(null));routeObjs=[];
+  routeObjs.push(new kakao.maps.Polyline({map,path:route.map(LL),strokeWeight:6,strokeColor:'#6b7280',strokeOpacity:.7,strokeStyle:'solid'}));
+  const add=(km,txt,cls)=>routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(km)),content:`<div class="cp ${cls||''}">${txt}</div>`,yAnchor:1.4,zIndex:1}));
+  for(let k=0;k<=40;k+=5)add(k,k?k+'K':'출발');
+  add(TOTAL,'도착','fin');
+  const b=new kakao.maps.LatLngBounds();route.forEach(p=>b.extend(LL(p)));map.setBounds(b);
+}
+$('gpx').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const x=new DOMParser().parseFromString(await f.text(),'text/xml');
+  const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
+  if(pts.length>1){route=pts;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
+};
+
+/* ================= 데이터 파싱/조회 ================= */
+function parseSplits(text){
+  const out=[],re=/(출발|도착|\d+K)\s*[:\s]\s*(\d{1,2}:\d{2}:\d{2})/g;let m;
+  while((m=re.exec(text))){if(m[1] in KM_OF)out.push({km:KM_OF[m[1]],t:toS(m[2])})}
+  const seen={};return out.filter(s=>!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
+function urlFor(bib){
+  const target=`${cfg.base}/${cfg.evt}/${bib}`;
+  const px=cfg.proxyCustom||cfg.proxy;
+  return px?px+encodeURIComponent(target):target;
+}
+async function fetchOne(r){
+  try{
+    const res=await fetch(urlFor(r.bib),{cache:'no-store'});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const html=await res.text();
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    const sp=parseSplits(doc.body?doc.body.textContent:html);
+    if(sp.length)r.splits=sp;
+    r.err=null;
+  }catch(e){r.err=e.message||'실패'}
+}
+async function pollAll(){
+  if(demo)return;
+  $('stat').textContent='갱신 중…';
+  for(const r of runners){await fetchOne(r);render();await new Promise(s=>setTimeout(s,300))}
+  const bad=runners.filter(r=>r.err).length;
+  $('stat').textContent=`마지막 갱신 ${fmt(kstNow())}`+(bad?` · 실패 ${bad}명`:'');
+}
+function startPolling(){
+  clearInterval(timerPoll);
+  if(demo)return;
+  pollAll();timerPoll=setInterval(pollAll,Math.max(30,+cfg.intv)*1000);
+}
+
+/* ================= 위치 추정 ================= */
+function estimate(r,t){
+  const known=r.splits.filter(s=>s.t<=t);
+  if(!known.length)return{km:0,state:'출발 전',conf:'wait'};
+  const last=known[known.length-1];
+  if(last.km>=TOTAL){const st=r.splits[0].km===0?r.splits[0].t:null;return{km:TOTAL,state:'완주'+(st?' '+fmt(last.t-st):''),conf:'done',last}}
+  let pace;
+  if(known.length>=2){
+    const a=known[known.length-2],b=known[known.length-1];
+    const p1=(b.t-a.t)/(b.km-a.km);
+    if(known.length>=3){const c=known[known.length-3];const p0=(a.t-c.t)/(a.km-c.km);pace=p1*.7+p0*.3}else pace=p1;
+  }else pace=cfg.dpace*60;
+  const nextKm=Math.min(last.km+5,TOTAL);
+  let km=last.km+(t-last.t)/pace;
+  const stall=km>nextKm-0.05;km=Math.min(km,nextKm-0.05);
+  return{km,pace,last,state:(last.km?last.km+'K':'출발')+' 통과 '+fmt(last.t),conf:stall?'stall':'est'};
+}
+
+/* ================= 렌더링 ================= */
+const mk=new Map();
+function focusRunner(bib){
+  focusBib=String(bib);
+  const o=mk.get(focusBib);
+  if(map&&o){if(map.getLevel()>4)map.setLevel(4);map.panTo(o.getPosition())}
+  render();
+}
+function render(){
+  const t=now();$('clk').textContent=fmt(t)+(demo?' (데모)':'');
+  const rows=runners.map(r=>({r,e:estimate(r,t)}));
+  if(map){
+    rows.forEach(({r,e})=>{
+      const pos=LL(posAt(e.km));
+      const ck=e.conf+(focusBib===r.bib?'h':'')+r.name;
+      let o=mk.get(r.bib);
+      const html=`<div class="mk ${e.conf==='est'?'est':''} ${focusBib===r.bib?'hl':''}" onclick="focusRunner('${r.bib}')"><i style="background:${r.color}"></i><span>${r.name}</span></div>`;
+      if(!o){o=new kakao.maps.CustomOverlay({map,position:pos,content:html,xAnchor:.1,yAnchor:.5,zIndex:10,clickable:true});mk.set(r.bib,o);r._ck=ck}
+      else{o.setPosition(pos);if(r._ck!==ck){o.setContent(html);r._ck=ck}}
+      o.setZIndex(focusBib===r.bib?20:10);
+    });
+  }
+  rows.sort((a,b)=>b.e.km-a.e.km);
+  $('list').innerHTML=rows.map(({r,e})=>{
+    const pc=e.pace?`${Math.floor(e.pace/60)}:${String(Math.round(e.pace%60)).padStart(2,'0')}/km`:'-';
+    const tg=r.err&&!r.splits.length?['err','조회실패']:({wait:['','대기'],est:['on','추정중'],stall:['','신호대기'],done:['','완주']})[e.conf];
+    return`<div class="ri" data-b="${r.bib}"><span class="dot" style="background:${r.color}"></span>
+    <div><div class="nm">${r.name} <span class="mu">#${r.bib}</span></div><div class="mu">${e.state} · ${e.km.toFixed(1)}km · ${pc}</div></div>
+    <span class="tag ${tg[0]}">${tg[1]}</span></div>`}).join('')||'<div class="ri mu">설정에서 크루를 추가하세요</div>';
+  document.querySelectorAll('.ri[data-b]').forEach(el=>el.onclick=()=>focusRunner(el.dataset.b));
+}
+setInterval(render,1000);
+
+/* ================= 크루 구성 ================= */
+function loadCrew(){
+  mk.forEach(o=>o.setMap(null));mk.clear();
+  const old=Object.fromEntries(runners.map(r=>[r.bib,r]));
+  runners=cfg.crew.split('\n').map(l=>l.trim()).filter(Boolean).map((l,i)=>{
+    const[n,b]=l.split(/[,\t]/).map(s=>s.trim());const bib=b||n,name=b?n:('#'+n);
+    return old[bib]?Object.assign(old[bib],{name,_ck:null}):{name,bib,splits:[],color:`hsl(${(i*137.5)%360} 75% 45%)`,err:null};
+  });
+}
+
+/* ================= 데모 ================= */
+const SAMPLE='출발 08:24:06 5K 08:53:13 10K 09:22:17 15K 09:50:50 20K 10:19:09 25K 10:49:05 30K 11:20:43 35K 11:57:24 40K 12:36:12 도착 12:50:50';
+function startDemo(){
+  clearInterval(timerPoll);
+  const base=parseSplits(SAMPLE),t0=base[0].t;
+  runners.forEach((r,i)=>{
+    const f=0.75+((i*37)%50)/100,off=((i*13)%240);
+    r.splits=base.map(s=>({km:s.km,t:Math.round(t0+off+(s.t-t0)*f)}));r.err=null});
+  demo={t:t0-120};
+  demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>t0+22000)demo.t=t0-120}},500);
+  $('stat').textContent='데모: 실제 시각 대신 가상 시계 사용';
+}
+
+/* ================= UI ================= */
+function fill(){
+  $('key').value=cfg.key;$('crew').value=cfg.crew;$('evt').value=cfg.evt;$('base').value=cfg.base;
+  $('proxy').value=cfg.proxy;$('proxyCustom').value=cfg.proxyCustom;$('intv').value=cfg.intv;$('dpace').value=cfg.dpace;
+}
+function persist(){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}
+$('cfg').onclick=()=>{fill();$('dlg').showModal()};
+$('close').onclick=()=>$('dlg').close();
+$('save').onclick=()=>{
+  const oldKey=cfg.key;
+  cfg={key:$('key').value.trim(),crew:$('crew').value,evt:$('evt').value.trim(),base:$('base').value.trim().replace(/\/$/,''),proxy:$('proxy').value,proxyCustom:$('proxyCustom').value.trim(),intv:+$('intv').value||60,dpace:+$('dpace').value||6.5};
+  persist();
+  if(cfg.key!==oldKey){location.reload();return}
+  if(demo){clearInterval(demo.iv);demo=null}
+  loadCrew();$('dlg').close();render();startPolling();
+};
+$('demo').onclick=()=>{
+  cfg.key=$('key').value.trim()||cfg.key;
+  cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3\n크루D,4\n크루E,5\n크루F,6';
+  if(demo)clearInterval(demo.iv);
+  persist();loadCrew();startDemo();$('dlg').close();render();
+};
+$('refresh').onclick=()=>{if(!demo)pollAll()};
+$('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
+$('dlg').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close()});
+
+prep();loadCrew();render();initMap();
+if(cfg.crew.trim())startPolling();
+if(!cfg.key||!cfg.crew.trim()){fill();$('dlg').showModal()}
+</script>
+</body>
+</html>
