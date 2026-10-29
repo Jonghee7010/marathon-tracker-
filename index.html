@@ -42,8 +42,8 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
 .lbl-off .mk span{display:none}
 .cp{font-size:11px;background:#fff;color:#444;border:1px solid #aaa;border-radius:10px;padding:0 6px;white-space:nowrap;box-shadow:0 0 2px #0004}
 .cp.fin{background:#16a34a;color:#fff;border-color:#16a34a}
-.cp.t10{background:#dbeafe;color:#1e3a8a;border-color:#2563eb}
-.cp.t10.fin{background:#2563eb;color:#fff}
+.dev-only{display:none!important}
+body.dev .dev-only{display:inline-block!important}
 @keyframes p{50%{box-shadow:0 0 0 7px #e8421f33}}
 @media (max-width:700px){main{flex-direction:column}aside{width:100%;max-width:none;height:40%;border-left:0;border-top:1px solid var(--bd)}}
 </style>
@@ -54,9 +54,9 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <span class="clock" id="clk">--:--:--</span>
   <span class="mu" id="stat"></span>
   <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
-    <button class="g" id="adjbtn">코스 보정</button>
-    <button class="g" id="lbl">이름 숨기기</button>
-    <button class="g" id="refresh">지금 갱신</button>
+    <button class="g dev-only" id="adjbtn">코스 보정</button>
+    <button class="g dev-only" id="lbl">이름 숨기기</button>
+    <button class="g dev-only" id="refresh">지금 갱신</button>
     <button id="cfg">설정 · 크루</button>
   </span>
 </header>
@@ -99,8 +99,6 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <label>크루 목록 (한 줄에 “이름, 배번, 코스, 예상페이스”)</label>
   <p class="help" style="margin:0 0 4px">코스는 Full 또는 10K(생략 시 Full), 예상페이스는 분:초/km (예: 5:30). 예) 김철수, 20456, 10K, 5:30</p>
   <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
-  <label>출발 후 5K 통과 전 가정 페이스 (분/km)</label>
-  <input id="dpace" type="number" step="0.1">
   <label>Full 코스 GPX (없으면 임시 코스 사용)</label>
   <input id="gpx" type="file" accept=".gpx">
   <label>10K 코스 GPX (없으면 풀 코스 앞부분을 임시 사용)</label>
@@ -197,10 +195,10 @@ function drawRoute(keep){
   const b=new kakao.maps.LatLngBounds();
   ['full','10k'].forEach(cc=>{
     const c=COURSES[cc],is10=cc==='10k',cps=cpList(cc);
-    routeObjs.push(new kakao.maps.Polyline({map,path:c.route.map(LL),strokeWeight:is10?5:6,strokeColor:is10?'#2563eb':'#6b7280',strokeOpacity:.65,strokeStyle:'solid'}));
+    routeObjs.push(new kakao.maps.Polyline({map,path:c.route.map(LL),strokeWeight:is10?5:6,strokeColor:'#6b7280',strokeOpacity:.65,strokeStyle:'solid'}));
     cps.forEach((k,i)=>{
-      const last=i===cps.length-1,nm=i===0?'출발':last?'도착':k+'K';
-      routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(k,cc)),content:`<div class="cp ${is10?'t10':''} ${last?'fin':''}">${is10?'10K코스 ':''}${nm}</div>`,yAnchor:1.4,zIndex:1}));
+      const last=i===cps.length-1,nm=i===0?'출발':last?(is10?'10K':'도착'):k+'K';
+      routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(k,cc)),content:`<div class="cp ${last?'fin':''}">${nm}</div>`,yAnchor:1.4,zIndex:1}));
     });
     c.route.forEach(p=>b.extend(LL(p)));
   });
@@ -359,13 +357,13 @@ function startDemo(){
 
 /* ================= UI ================= */
 function fill(){
-  $('crew').value=cfg.crew;$('dpace').value=cfg.dpace;
+  $('crew').value=cfg.crew;
 }
 function persist(){if(USE_SAVED_SETTINGS){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}}
 $('cfg').onclick=()=>{fill();$('dlg').showModal()};
 $('close').onclick=()=>$('dlg').close();
 $('save').onclick=()=>{
-  cfg=Object.assign({},cfg,{crew:$('crew').value,dpace:+$('dpace').value||6.5}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
+  cfg=Object.assign({},cfg,{crew:$('crew').value}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
   persist();
   if(cfg.key&&!map&&!sdkTried)initMap();
   if(demo){clearInterval(demo.iv);demo=null}
@@ -403,7 +401,7 @@ async function copyText(code,out,msg){
   catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
 }
 const COPYMSG='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.';
-$('copydef').onclick=()=>copyText(makeDefaults($('crew').value,+$('dpace').value||6.5),$('testout'),COPYMSG);
+$('copydef').onclick=()=>copyText(makeDefaults($('crew').value,cfg.dpace),$('testout'),COPYMSG);
 
 /* 코스 위치 보정 패널 */
 function showOff(){['10k','full'].forEach(cc=>{const c=COURSES[cc];$('off-'+cc).textContent=`북 ${c.dn}m · 동 ${c.de}m`})}
@@ -505,6 +503,7 @@ $('refresh').onclick=()=>{if(!demo)pollAll()};
 $('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
 $('dlg').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close()});
 
+if(/[?&]dev(=|&|$)/.test(location.search))document.body.classList.add('dev'); /* 주소 뒤에 ?dev=1 → 숨긴 도구 표시 */
 prep();loadCrew();render();initMap();
 if(cfg.crew.trim())startPolling();
 if(!cfg.crew.trim()){fill();$('dlg').showModal()}
