@@ -105,7 +105,7 @@ body.dev .dev-only{display:inline-block!important}
   <input id="gpx10" type="file" accept=".gpx">
   <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
     <button id="save">저장하고 시작</button>
-    <button class="g" id="demo">데모 재생 (2025 기록 기반)</button>
+    <button class="g" id="demo">데모 재생 (크루 실제 기록)</button>
     <button class="g" id="test">연결 테스트</button>
     <button class="g" id="copydef">DEFAULTS 코드 복사</button>
     <button class="g" id="close">닫기</button>
@@ -145,7 +145,7 @@ function now(){return demo?demo.t:kstNow()}
 let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
 const COURSES={
   full:{label:'Full',total:42.195,route:route,base:route,cum:[],custom:false,dn:0,de:0},
-  '10k':{label:'10K',total:10,route:null,base:null,cum:[],custom:false,dn:0,de:0}
+  '10k':{label:'10K',total:10,cpKm:7.3,route:null,base:null,cum:[],custom:false,dn:0,de:0}
 };
 ['full','10k'].forEach(k=>{const r=DEFAULTS.routes&&DEFAULTS.routes[k];if(r&&r.length>1){COURSES[k].base=r;COURSES[k].route=r;COURSES[k].custom=true}});
 /* 코스별 체크포인트: 0, 5, 10, … , 마지막은 코스 총거리 */
@@ -243,6 +243,19 @@ function batchUrl(bibs,c){
   c=c||cfg;
   return `${String(c.worker).replace(/\/+$/,'')}/?event=${encodeURIComponent(c.evt)}&bibs=${bibs.map(encodeURIComponent).join(',')}`;
 }
+function normSplits(r,raw){
+  /* 워커: 도착=-1, 체크포인트=-2 → 이 러너 코스의 거리로 변환 */
+  const T=COURSES[r.course].total,seen={};
+  const fin=raw.find(s=>s.km===-1),cps=raw.filter(s=>s.km===-2),base=raw.filter(s=>s.km>=0);
+  const out=raw.filter(s=>s.km>=0||s.km===-1).map(s=>s.km===-1?{km:T,t:s.t}:s);
+  if(cps.length===1&&r.course==='10k'){ /* 10K 체크포인트: 위치를 모르므로 직전 구간~도착을 일정 페이스로 보고 추정 (도착 전이면 기본 위치) */
+    const cp=cps[0],prev=base.filter(s=>s.t<cp.t).pop();
+    let km=COURSES['10k'].cpKm;
+    if(prev&&fin&&fin.t>prev.t)km=prev.km+(cp.t-prev.t)/(fin.t-prev.t)*(T-prev.km);
+    out.push({km:Math.round(km*100)/100,t:cp.t});
+  }
+  return out.filter(s=>s.km<=T+0.01&&!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
 async function fetchBatch(list){
   try{
     const res=await fetch(batchUrl(list.map(r=>r.bib)));
@@ -252,11 +265,7 @@ async function fetchBatch(list){
       const o=j.runners&&j.runners[r.bib];
       if(!o){r.err='응답 없음';return}
       if(o.err){r.err=o.err;return}
-      if(o.splits&&o.splits.length){
-        const T=COURSES[r.course].total,seen={};
-        /* 워커는 도착을 km=-1로 보냄 → 이 러너 코스의 총거리로 변환, 코스 거리를 넘는 값/중복은 제거 */
-        r.splits=o.splits.map(s=>s.km<0?{km:T,t:s.t}:s).filter(s=>s.km<=T+0.01&&!seen[s.km]&&(seen[s.km]=1));
-      }
+      if(o.splits&&o.splits.length)r.splits=normSplits(r,o.splits);
       r.err=null;
     });
   }catch(e){list.forEach(r=>r.err=e.message||'실패')}
@@ -324,7 +333,7 @@ function render(){
     const pc=e.pace?`${Math.floor(e.pace/60)}:${String(Math.round(e.pace%60)).padStart(2,'0')}/km`:'-';
     const tg=r.err&&!r.splits.length?['err','조회실패']:({wait:['','대기'],est:['on','추정중'],stall:['','신호대기'],done:['','완주']})[e.conf];
     return`<div class="ri" data-b="${r.bib}"><span class="dot" style="background:${r.color}"></span>
-    <div><div class="nm">${r.name} <span class="mu">#${r.bib} · ${COURSES[r.course].label}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
+    <div><div class="nm">${r.name} <span class="mu">#${r.bib} · ${COURSES[r.course].label}${r.demoSynth?' · 가상기록('+(r.demoWhy||'')+')':''}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
     <span class="tag ${tg[0]}">${tg[1]}</span></div>`}).join('')||'<div class="ri mu">설정에서 크루를 추가하세요</div>';
   document.querySelectorAll('.ri[data-b]').forEach(el=>el.onclick=()=>focusRunner(el.dataset.b));
 }
@@ -344,15 +353,29 @@ function loadCrew(){
 
 /* ================= 데모 ================= */
 const SAMPLE='출발 08:24:06 5K 08:53:13 10K 09:22:17 15K 09:50:50 20K 10:19:09 25K 10:49:05 30K 11:20:43 35K 11:57:24 40K 12:36:12 도착 12:50:50';
-function startDemo(){
-  clearInterval(timerPoll);
-  const base=parseSplits(SAMPLE),t0=base[0].t;
+let demoLoading=false;
+async function startDemo(){
+  if(demoLoading)return;demoLoading=true;
+  clearInterval(timerPoll);if(demo){clearInterval(demo.iv);demo=null}
+  $('stat').textContent='데모: 크루의 실제 기록을 불러오는 중…';
+  runners.forEach(r=>{r.splits=[];r.err=null;r.demoSynth=false});
+  /* 1) 워커로 각자의 실제 기록 조회 (40명씩) */
+  if(cfg.worker)for(let i=0;i<runners.length;i+=40)await fetchBatch(runners.slice(i,i+40));
+  /* 2) 실제 기록이 없는 러너는 예상 페이스로 만든 가상 기록으로 채움 */
+  let real=0,synth=0;
   runners.forEach((r,i)=>{
-    const f=0.75+((i*37)%50)/100,off=((i*13)%240);
-    r.splits=base.filter(s=>r.course==='10k'?s.km<=10:true).map(s=>({km:s.km,t:Math.round(t0+off+(s.t-t0)*f)}));r.err=null});
-  demo={t:t0-120};
-  demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>t0+22000)demo.t=t0-120}},500);
-  $('stat').textContent='데모: 실제 시각 대신 가상 시계 사용';
+    if(r.splits.length>=2){real++;r.err=null;return}
+    r.demoWhy=r.err?('조회 오류: '+r.err):(r.splits.length?'구간 기록 1개뿐':'기록 없음');
+    const pace=r.pace0||cfg.dpace*60,start=toS('08:24:06')+((i*13)%240);
+    r.splits=cpList(r.course).map(k=>({km:k,t:Math.round(start+pace*k)}));
+    r.err=null;r.demoSynth=true;synth++;
+  });
+  /* 3) 가상 시계: 가장 이른 출발 3분 전부터 마지막 도착 1분 뒤까지 100배속 반복 재생 */
+  const tmin=Math.min(...runners.map(r=>r.splits[0].t))-180,tmax=Math.max(...runners.map(r=>r.splits[r.splits.length-1].t))+60;
+  demo={t:tmin};
+  demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>tmax)demo.t=tmin}},500);
+  $('stat').textContent=`데모: 실제 기록 ${real}명`+(synth?` · 가상 기록 ${synth}명(예상 페이스)`:'')+' · 100배속 반복';
+  demoLoading=false;render();
 }
 
 /* ================= UI ================= */
@@ -366,11 +389,11 @@ $('save').onclick=()=>{
   cfg=Object.assign({},cfg,{crew:$('crew').value}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
   persist();
   if(cfg.key&&!map&&!sdkTried)initMap();
-  if(demo){clearInterval(demo.iv);demo=null}
+  if(demo){clearInterval(demo.iv);demo=null;runners.forEach(r=>{r.splits=[];r.demoSynth=false;r.err=null})}
   loadCrew();$('dlg').close();render();startPolling();
 };
 $('demo').onclick=()=>{
-  cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3,10K\n크루D,4\n크루E,5,10K\n크루F,6';
+  cfg.crew=$('crew').value||cfg.crew;
   if(demo)clearInterval(demo.iv);
   persist();loadCrew();startDemo();$('dlg').close();render();
 };
