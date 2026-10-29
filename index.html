@@ -54,6 +54,7 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <span class="clock" id="clk">--:--:--</span>
   <span class="mu" id="stat"></span>
   <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="g" id="adjbtn">코스 보정</button>
     <button class="g" id="lbl">이름 숨기기</button>
     <button class="g" id="refresh">지금 갱신</button>
     <button id="cfg">설정 · 크루</button>
@@ -63,6 +64,34 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <div id="map"><div class="ph" id="ph">index.html의 DEFAULTS.key에<br>카카오 JavaScript 키를 넣어 주세요.</div></div>
   <aside id="list"></aside>
 </main>
+
+<div id="adj" style="display:none;position:fixed;left:10px;bottom:10px;z-index:1000;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px;padding:10px;max-width:calc(100vw - 20px);max-height:80vh;overflow:auto;box-shadow:0 2px 12px #0006">
+  <b>코스 위치 보정</b>
+  <div class="mu" style="margin:2px 0 6px">화살표로 코스를 옮겨 지도의 도로와 맞추세요. 이동 단위
+    <select id="shstep" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:6px"><option>10</option><option selected>50</option><option>200</option></select> m</div>
+  <div class="adjrow" data-c="10k" style="display:flex;gap:6px;align-items:center;margin:4px 0"><span style="width:44px;font-weight:600">10K</span><button class="g" data-d="w">←</button><button class="g" data-d="n">↑</button><button class="g" data-d="s">↓</button><button class="g" data-d="e">→</button><span class="mu" id="off-10k"></span></div>
+  <div class="adjrow" data-c="full" style="display:flex;gap:6px;align-items:center;margin:4px 0"><span style="width:44px;font-weight:600">Full</span><button class="g" data-d="w">←</button><button class="g" data-d="n">↑</button><button class="g" data-d="s">↓</button><button class="g" data-d="e">→</button><span class="mu" id="off-full"></span></div>
+  <div style="border-top:1px solid var(--bd);margin-top:8px;padding-top:8px">
+    <b>경로 편집</b> <span class="mu">GPX 경로를 고쳐서 다시 내려받기</span>
+    <div style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+      <select id="edcc" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:4px"><option value="10k">10K</option><option value="full">Full</option></select>
+      <button id="edtoggle">편집 시작</button>
+      <button class="g" id="edgpx">GPX 내려받기</button>
+    </div>
+    <div id="edtools" style="display:none">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label><input type="radio" name="edmode" value="move" checked> 이동</label>
+        <label><input type="radio" name="edmode" value="add"> 추가</label>
+        <label><input type="radio" name="edmode" value="del"> 삭제</label>
+        <button class="g" id="edundo">되돌리기</button>
+      </div>
+      <div class="mu" style="margin-top:4px">이동: 점을 끌기 · 추가: 지도(선 근처)를 클릭 · 삭제: 점을 클릭</div>
+    </div>
+    <div class="mu" id="edinfo" style="margin-top:4px"></div>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button id="adjcopy">보정 반영해서 DEFAULTS 복사</button><button class="g" id="adjreset">초기화</button></div>
+  <pre id="adjout" class="mu" style="display:none;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;margin:6px 0 0"></pre>
+</div>
 
 <dialog id="dlg">
   <h3 style="margin:0 0 4px">설정</h3>
@@ -117,10 +146,10 @@ function now(){return demo?demo.t:kstNow()}
 /* ================= 코스 ================= */
 let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
 const COURSES={
-  full:{label:'Full',total:42.195,route:route,cum:[],custom:false},
-  '10k':{label:'10K',total:10,route:null,cum:[],custom:false}
+  full:{label:'Full',total:42.195,route:route,base:route,cum:[],custom:false,dn:0,de:0},
+  '10k':{label:'10K',total:10,route:null,base:null,cum:[],custom:false,dn:0,de:0}
 };
-['full','10k'].forEach(k=>{const r=DEFAULTS.routes&&DEFAULTS.routes[k];if(r&&r.length>1){COURSES[k].route=r;COURSES[k].custom=true}});
+['full','10k'].forEach(k=>{const r=DEFAULTS.routes&&DEFAULTS.routes[k];if(r&&r.length>1){COURSES[k].base=r;COURSES[k].route=r;COURSES[k].custom=true}});
 /* 코스별 체크포인트: 0, 5, 10, … , 마지막은 코스 총거리 */
 function cpList(cc){const T=COURSES[cc].total,a=[];for(let k=0;k<T-0.01;k+=5)a.push(k);a.push(T);return a}
 function hav(a,b){const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
@@ -131,11 +160,16 @@ function posOn(c,km){ /* 코스 c 위의 km 지점 좌표 (공식 거리를 폴�
   const t=(d-c.cum[i-1])/((c.cum[i]-c.cum[i-1])||1);
   return[p[i-1][0]+(p[i][0]-p[i-1][0])*t,p[i-1][1]+(p[i][1]-p[i-1][1])*t];
 }
+function applyShift(c){ /* base 좌표를 북쪽 dn m, 동쪽 de m 만큼 옮김 */
+  const k=111195;
+  c.route=c.base.map(p=>[p[0]+c.dn/k,p[1]+c.de/(k*Math.cos(p[0]*Math.PI/180))]);
+  c.cum=pathLen(c.route);
+}
 function prep(){
   const f=COURSES.full,t=COURSES['10k'];
-  f.cum=pathLen(f.route);
-  if(!t.custom)t.route=Array.from({length:21},(_,i)=>posOn(f,i/20*10)); /* 10K GPX가 없으면 풀 코스 앞부분을 임시로 사용 */
-  t.cum=pathLen(t.route);
+  applyShift(f);
+  if(!t.custom)t.base=Array.from({length:21},(_,i)=>posOn(f,i/20*10)); /* 10K GPX가 없으면 풀 코스 앞부분을 임시로 사용 */
+  applyShift(t);
 }
 function posAt(km,cc){return posOn(COURSES[cc||'full'],km)}
 
@@ -153,11 +187,11 @@ function initMap(){
     $('ph').remove();
     map=new kakao.maps.Map($('map'),{center:new kakao.maps.LatLng(37.54,126.95),level:8});
     map.addControl(new kakao.maps.ZoomControl(),kakao.maps.ControlPosition.RIGHT);
-    drawRoute();render();
+    drawRoute();render();edBindMap();
   });
   document.head.appendChild(s);
 }
-function drawRoute(){
+function drawRoute(keep){
   if(!map)return;
   routeObjs.forEach(o=>o.setMap(null));routeObjs=[];
   const b=new kakao.maps.LatLngBounds();
@@ -170,14 +204,14 @@ function drawRoute(){
     });
     c.route.forEach(p=>b.extend(LL(p)));
   });
-  map.setBounds(b);
+  if(!keep)map.setBounds(b);
 }
 function bindGpx(id,cc){
   $(id).onchange=async e=>{
     const f=e.target.files[0];if(!f)return;
     const x=new DOMParser().parseFromString(await f.text(),'text/xml');
     const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
-    if(pts.length>1){COURSES[cc].route=pts;COURSES[cc].custom=true;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
+    if(pts.length>1){COURSES[cc].base=pts;COURSES[cc].dn=0;COURSES[cc].de=0;COURSES[cc].custom=true;prep();drawRoute();render();if(typeof edRefresh==='function')edRefresh()}else alert('GPX에서 좌표를 찾지 못했어요');
   };
 }
 bindGpx('gpx','full');bindGpx('gpx10','10k');
@@ -357,14 +391,115 @@ $('test').onclick=async()=>{
     out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km<0?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
   }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}`}
 };
-$('copydef').onclick=async()=>{
-  const out=$('testout');out.style.display='block';
+function makeDefaults(crew,dpace){
   const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
-  const rtOf=cc=>COURSES[cc].custom?JSON.stringify(smp(COURSES[cc].route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null';
+  const rtOf=cc=>{const c=COURSES[cc];return (c.custom||c.dn||c.de)?JSON.stringify(smp(c.route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null'};
   const rt=`{full:${rtOf('full')},'10k':${rtOf('10k')}}`;
-  const code=`const DEFAULTS={\n  key:${JSON.stringify(cfg.key)},\n  worker:${JSON.stringify(cfg.worker)},\n  evt:${JSON.stringify(cfg.evt)},\n  intv:${cfg.intv},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  routes:${rt}\n};`;
-  try{await navigator.clipboard.writeText(code);out.textContent='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.\n\n'+code}
+  return `const DEFAULTS={\n  key:${JSON.stringify(cfg.key)},\n  worker:${JSON.stringify(cfg.worker)},\n  evt:${JSON.stringify(cfg.evt)},\n  intv:${cfg.intv},\n  dpace:${dpace},\n  crew:${JSON.stringify(crew)},\n  routes:${rt}\n};`;
+}
+async function copyText(code,out,msg){
+  out.style.display='block';
+  try{await navigator.clipboard.writeText(code);out.textContent=msg+'\n\n'+code}
   catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
+}
+const COPYMSG='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.';
+$('copydef').onclick=()=>copyText(makeDefaults($('crew').value,+$('dpace').value||6.5),$('testout'),COPYMSG);
+
+/* 코스 위치 보정 패널 */
+function showOff(){['10k','full'].forEach(cc=>{const c=COURSES[cc];$('off-'+cc).textContent=`북 ${c.dn}m · 동 ${c.de}m`})}
+function shiftCourse(cc,d){
+  if(ed.on&&ed.cc===cc){$('edinfo').textContent='편집 중에는 위치 이동 버튼을 쓸 수 없어요. 편집을 끝낸 뒤 사용하세요.';return}
+  const s=+$('shstep').value,c=COURSES[cc];
+  if(d==='n')c.dn+=s;if(d==='s')c.dn-=s;if(d==='e')c.de+=s;if(d==='w')c.de-=s;
+  prep();drawRoute(true);render();showOff();
+}
+document.querySelectorAll('#adj .adjrow button').forEach(b=>b.onclick=()=>shiftCourse(b.parentElement.dataset.c,b.dataset.d));
+$('adjbtn').onclick=()=>{const a=$('adj');a.style.display=a.style.display==='none'?'block':'none';showOff()};
+$('adjreset').onclick=()=>{['full','10k'].forEach(cc=>{COURSES[cc].dn=0;COURSES[cc].de=0});prep();drawRoute(true);render();showOff()};
+$('adjcopy').onclick=()=>copyText(makeDefaults(cfg.crew,cfg.dpace),$('adjout'),COPYMSG);
+
+/* ===== 경로 편집 (GPX 수정 후 다시 내려받기) ===== */
+const ed={on:false,cc:'10k',mode:'move',hist:[],marks:[],line:null,last:0};
+const EDICON='data:image/svg+xml;utf8,'+encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18'><circle cx='9' cy='9' r='6.5' fill='white' stroke='#e8421f' stroke-width='3'/></svg>");
+function edInfo(){const c=COURSES[ed.cc],L=pathLen(c.base)[c.base.length-1];$('edinfo').textContent=`점 ${c.base.length}개 · 총 길이 ${L.toFixed(2)}km (공식 ${c.total}km)`}
+function edSnap(){ed.hist.push(JSON.stringify(COURSES[ed.cc].base));if(ed.hist.length>60)ed.hist.shift()}
+function edCommit(){prep();drawRoute(true);render();edInfo()}
+function edClear(){ed.marks.forEach(m=>m.setMap(null));ed.marks=[];if(ed.line){ed.line.setMap(null);ed.line=null}}
+function edRefresh(){if(ed.on)edBuild()}
+function edBuild(){
+  edClear();if(!map||!ed.on)return;
+  const c=COURSES[ed.cc];
+  ed.line=new kakao.maps.Polyline({map,path:c.base.map(LL),strokeWeight:3,strokeColor:'#e8421f',strokeOpacity:.9,zIndex:5});
+  c.base.forEach((p,i)=>{
+    /* 카카오 마커에는 '드래그 중' 이벤트가 없어서, 점을 직접 만들어 포인터 이벤트로 끌기를 처리 */
+    const el=document.createElement('div');
+    el.style.cssText='width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid #e8421f;box-sizing:border-box;touch-action:none;cursor:'+(ed.mode==='move'?'grab':ed.mode==='del'?'pointer':'crosshair');
+    const ov=new kakao.maps.CustomOverlay({map,position:LL(p),content:el,xAnchor:.5,yAnchor:.5,zIndex:20,clickable:true});
+    let drag=false;
+    el.onpointerdown=e=>{
+      e.stopPropagation();e.preventDefault();ed.last=Date.now();
+      if(ed.mode==='del'){if(c.base.length>2){edSnap();c.base.splice(i,1);edBuild();edCommit()}return}
+      if(ed.mode!=='move')return;
+      drag=true;edSnap();map.setDraggable(false);
+      try{el.setPointerCapture(e.pointerId)}catch(_){}
+    };
+    el.onpointermove=e=>{
+      if(!drag)return;
+      try{
+        const r=$('map').getBoundingClientRect();
+        const ll=map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(e.clientX-r.left,e.clientY-r.top));
+        c.base[i]=[ll.getLat(),ll.getLng()];
+        ov.setPosition(ll);ed.line.setPath(c.base.map(LL));
+        prep();render();edInfo(); /* 크루 마커와 길이도 실시간 갱신 */
+      }catch(err){$('edinfo').textContent='점 이동 실패: '+err.message}
+    };
+    const end=()=>{if(!drag)return;drag=false;map.setDraggable(true);edCommit()};
+    el.onpointerup=end;el.onpointercancel=end;
+    ed.marks.push(ov);
+  });
+  edInfo();
+}
+function nearestSeg(b,q){ /* 점 q(위도,경도)에서 가장 가까운 선분 번호 */
+  const kx=Math.cos(q[0]*Math.PI/180);let bi=0,bd=Infinity;
+  for(let i=0;i<b.length-1;i++){
+    const ax=b[i][1]*kx,ay=b[i][0],dx=b[i+1][1]*kx-ax,dy=b[i+1][0]-ay,px=q[1]*kx,py=q[0];
+    const t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy||1)));
+    const d=(ax+dx*t-px)**2+(ay+dy*t-py)**2;
+    if(d<bd){bd=d;bi=i}
+  }
+  return bi;
+}
+function edBindMap(){
+  kakao.maps.event.addListener(map,'click',e=>{
+    if(!ed.on||ed.mode!=='add'||Date.now()-ed.last<300)return;
+    ed.last=Date.now();
+    const q=[e.latLng.getLat(),e.latLng.getLng()],b=COURSES[ed.cc].base;
+    edSnap();b.splice(nearestSeg(b,q)+1,0,q);edBuild();edCommit();
+  });
+}
+$('edtoggle').onclick=()=>{
+  if(!ed.on){
+    if(!map){$('edinfo').textContent='지도가 아직 준비되지 않았어요.';return}
+    ed.cc=$('edcc').value;const c=COURSES[ed.cc];
+    c.base=c.route.map(p=>[p[0],p[1]]);c.dn=0;c.de=0;c.custom=true; /* 지금 보이는 위치(이동량 포함)를 기준 좌표로 확정 */
+    ed.on=true;ed.hist=[];showOff();
+    $('edtoggle').textContent='편집 끝내기';$('edtools').style.display='block';$('edcc').disabled=true;
+    edBuild();
+  }else{
+    ed.on=false;edClear();
+    $('edtoggle').textContent='편집 시작';$('edtools').style.display='none';$('edcc').disabled=false;
+    $('edinfo').textContent='편집 내용은 새로고침하면 사라져요. "GPX 내려받기" 또는 "DEFAULTS 복사"로 저장하세요.';
+  }
+};
+document.querySelectorAll('input[name=edmode]').forEach(r=>r.onchange=()=>{ed.mode=r.value;edBuild()});
+$('edundo').onclick=()=>{if(!ed.hist.length)return;COURSES[ed.cc].base=JSON.parse(ed.hist.pop());edBuild();edCommit()};
+$('edgpx').onclick=()=>{ /* 지금 지도에 표시된 경로를 GPX로 저장 */
+  const cc=$('edcc').value,c=COURSES[cc],nm='JTBC 서울마라톤 '+c.label+' (편집)';
+  const rows=c.route.map(p=>`      <trkpt lat="${p[0].toFixed(6)}" lon="${p[1].toFixed(6)}"></trkpt>`).join('\n');
+  const gpx=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="crew-tracker" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${nm}</name></metadata>\n  <trk>\n    <name>${nm}</name>\n    <trkseg>\n${rows}\n    </trkseg>\n  </trk>\n</gpx>\n`;
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));
+  a.download=`jtbc-${cc}-edited.gpx`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  $('edinfo').textContent=`${a.download} 저장을 시작했어요 (점 ${c.route.length}개)`;
 };
 $('refresh').onclick=()=>{if(!demo)pollAll()};
 $('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
