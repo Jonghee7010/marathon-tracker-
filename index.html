@@ -66,7 +66,7 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <h3 style="margin:0 0 4px">설정</h3>
 
   <label>카카오 JavaScript 키</label>
-  <input id="key" placeholder="JavaScript 키 (REST API 키 아님)" autocomplete="off" value="6fab83be49525f2fb3e81fb2b305282d">
+  <input id="key" placeholder="JavaScript 키 (REST API 키 아님)" autocomplete="off">
   <p class="help">
     ① <b>developers.kakao.com</b> → 내 애플리케이션 → 앱 만들기<br>
     ② 앱 설정 → 플랫폼 → <b>Web</b> 사이트 도메인에 이 페이지를 띄울 주소 등록<br>
@@ -98,8 +98,10 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
     <button id="save">저장하고 시작</button>
     <button class="g" id="demo">데모 재생 (2025 기록 기반)</button>
+    <button class="g" id="test">연결 테스트</button>
     <button class="g" id="close">닫기</button>
   </div>
+  <pre id="testout" class="help" style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;display:none"></pre>
   <p class="help">설정은 이 브라우저(localStorage)에 저장됩니다. 키를 바꾸면 페이지가 새로고침돼요.</p>
 </dialog>
 
@@ -108,7 +110,7 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
 const TOTAL=42.195;
 const $=id=>document.getElementById(id);
 const KM_OF={'출발':0,'도착':TOTAL};for(let k=5;k<=40;k+=5)KM_OF[k+'K']=k;
-let cfg={key:'',crew:'',evt:'133',base:'https://runable.myresult.co.kr',proxy:'https://corsproxy.io/?url=',proxyCustom:'',intv:60,dpace:6.5};
+let cfg={key:'',crew:'',evt:'133',base:'https://runable.myresult.co.kr',proxy:'',proxyCustom:'',intv:60,dpace:6.5};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}
 let runners=[],demo=null,timerPoll=null,focusBib=null,labels=true,map=null;
 
@@ -169,18 +171,36 @@ function parseSplits(text){
   while((m=re.exec(text))){if(m[1] in KM_OF)out.push({km:KM_OF[m[1]],t:toS(m[2])})}
   const seen={};return out.filter(s=>!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
 }
-function urlFor(bib){
-  const target=`${cfg.base}/${cfg.evt}/${bib}`;
-  const px=cfg.proxyCustom||cfg.proxy;
+/* /api/event/{대회}/player/{배번} 의 JSON 응답에서 통과기록 추출 (구조가 달라도 최대한 읽음) */
+function parseRecords(o){
+  const recs=o.records||(o.player&&o.player.records)||[];
+  const out=[];
+  recs.forEach(x=>{
+    if(!x||!x.time_point)return;
+    const nm=x.point&&x.point.name;
+    let km=(nm in KM_OF)?KM_OF[nm]:Number(x.point&&x.point.distance);
+    if(!(km>=0))return;
+    if(km>42)km=TOTAL;
+    out.push({km,t:toS(x.time_point)});
+  });
+  const seen={};return out.filter(s=>!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
+function htmlText(h){return h.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ')}
+function parseAny(txt){
+  try{return parseRecords(JSON.parse(txt))}catch(e){}
+  return parseSplits(htmlText(txt)); /* 공개 기록 페이지 HTML: 태그를 공백으로 바꾼 뒤 구간/시각 쌍 추출 */
+}
+function urlFor(bib,c){
+  c=c||cfg;
+  const target=`${c.base}/${c.evt}/${bib}`;
+  const px=c.proxyCustom||c.proxy;
   return px?px+encodeURIComponent(target):target;
 }
 async function fetchOne(r){
   try{
     const res=await fetch(urlFor(r.bib),{cache:'no-store'});
     if(!res.ok)throw new Error('HTTP '+res.status);
-    const html=await res.text();
-    const doc=new DOMParser().parseFromString(html,'text/html');
-    const sp=parseSplits(doc.body?doc.body.textContent:html);
+    const sp=parseAny(await res.text());
     if(sp.length)r.splits=sp;
     r.err=null;
   }catch(e){r.err=e.message||'실패'}
@@ -293,6 +313,20 @@ $('demo').onclick=()=>{
   cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3\n크루D,4\n크루E,5\n크루F,6';
   if(demo)clearInterval(demo.iv);
   persist();loadCrew();startDemo();$('dlg').close();render();
+};
+$('test').onclick=async()=>{
+  const out=$('testout');out.style.display='block';out.textContent='조회 중…';
+  const first=$('crew').value.split('\n').map(s=>s.trim()).filter(Boolean)[0]||'';
+  const bib=(first.split(/[,\t]/)[1]||first).trim();
+  if(!bib){out.textContent='크루 목록 첫 줄에 “이름, 배번”을 넣어 주세요.';return}
+  const c={base:$('base').value.trim().replace(/\/$/,''),evt:$('evt').value.trim(),proxy:$('proxy').value,proxyCustom:$('proxyCustom').value.trim()};
+  const url=urlFor(bib,c);
+  try{
+    const res=await fetch(url,{cache:'no-store'});
+    const txt=await res.text();
+    const sp=parseAny(txt);
+    out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km===TOTAL?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
+  }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}\n(CORS 차단이면 프록시가 필요합니다)`}
 };
 $('refresh').onclick=()=>{if(!demo)pollAll()};
 $('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
