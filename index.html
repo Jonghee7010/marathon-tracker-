@@ -57,6 +57,7 @@ body.dev .dev-only{display:inline-block!important}
     <button class="g dev-only" id="adjbtn">코스 보정</button>
     <button class="g dev-only" id="lbl">이름 숨기기</button>
     <button class="g dev-only" id="refresh">지금 갱신</button>
+    <button class="g" id="demo">데모 재생</button>
     <button id="cfg">설정 · 크루</button>
   </span>
 </header>
@@ -105,8 +106,6 @@ body.dev .dev-only{display:inline-block!important}
   <input id="gpx10" type="file" accept=".gpx">
   <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
     <button id="save">저장하고 시작</button>
-    <button class="g" id="demo">데모 재생 (크루 실제 기록)</button>
-    <button class="g" id="test">연결 테스트</button>
     <button class="g" id="copydef">DEFAULTS 코드 복사</button>
     <button class="g" id="close">닫기</button>
   </div>
@@ -375,7 +374,7 @@ async function startDemo(){
   demo={t:tmin};
   demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>tmax)demo.t=tmin}},500);
   $('stat').textContent=`데모: 실제 기록 ${real}명`+(synth?` · 가상 기록 ${synth}명(예상 페이스)`:'')+' · 100배속 반복';
-  demoLoading=false;render();
+  demoLoading=false;$('demo').textContent='데모 종료';render();
 }
 
 /* ================= UI ================= */
@@ -389,28 +388,19 @@ $('save').onclick=()=>{
   cfg=Object.assign({},cfg,{crew:$('crew').value}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
   persist();
   if(cfg.key&&!map&&!sdkTried)initMap();
-  if(demo){clearInterval(demo.iv);demo=null;runners.forEach(r=>{r.splits=[];r.demoSynth=false;r.err=null})}
+  if(demo)endDemo();
   loadCrew();$('dlg').close();render();startPolling();
 };
+function endDemo(){ /* 데모 상태 정리 (가상 시계·가상/조회 기록 제거) */
+  if(demo)clearInterval(demo.iv);demo=null;
+  runners.forEach(r=>{r.splits=[];r.demoSynth=false;r.err=null});
+  $('demo').textContent='데모 재생';
+}
 $('demo').onclick=()=>{
-  cfg.crew=$('crew').value||cfg.crew;
-  if(demo)clearInterval(demo.iv);
-  persist();loadCrew();startDemo();$('dlg').close();render();
-};
-$('test').onclick=async()=>{
-  const out=$('testout');out.style.display='block';out.textContent='조회 중…';
-  const first=$('crew').value.split('\n').map(s=>s.trim()).filter(Boolean)[0]||'';
-  const bib=(first.split(/[,\t]/)[1]||first).trim();
-  if(!bib){out.textContent='크루 목록 첫 줄에 “이름, 배번”을 넣어 주세요.';return}
-  const c={worker:cfg.worker,evt:cfg.evt};
-  if(!c.worker){out.textContent='워커 주소를 입력해 주세요.';return}
-  const url=batchUrl([bib],c);
-  try{
-    const res=await fetch(url);
-    const txt=await res.text();
-    let sp=[];try{sp=(JSON.parse(txt).runners[bib]||{}).splits||[]}catch(e){}
-    out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km<0?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
-  }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}`}
+  if(demoLoading)return;
+  if(demo){endDemo();$('stat').textContent='';render();startPolling();return} /* 재생 중이면 종료하고 실제 조회로 복귀 */
+  $('demo').textContent='불러오는 중…';
+  startDemo();
 };
 function makeDefaults(crew,dpace){
   const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
