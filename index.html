@@ -42,6 +42,8 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
 .lbl-off .mk span{display:none}
 .cp{font-size:11px;background:#fff;color:#444;border:1px solid #aaa;border-radius:10px;padding:0 6px;white-space:nowrap;box-shadow:0 0 2px #0004}
 .cp.fin{background:#16a34a;color:#fff;border-color:#16a34a}
+.cp.t10{background:#dbeafe;color:#1e3a8a;border-color:#2563eb}
+.cp.t10.fin{background:#2563eb;color:#fff}
 @keyframes p{50%{box-shadow:0 0 0 7px #e8421f33}}
 @media (max-width:700px){main{flex-direction:column}aside{width:100%;max-width:none;height:40%;border-left:0;border-top:1px solid var(--bd)}}
 </style>
@@ -76,7 +78,8 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
     ⚠ 파일을 더블클릭해서(file://) 열면 도메인 등록이 안 되어 지도가 뜨지 않아요.
   </p>
 
-  <label>크루 목록 (한 줄에 “이름, 배번”)</label>
+  <label>크루 목록 (한 줄에 “이름, 배번, 코스, 예상페이스”)</label>
+  <p class="help" style="margin:0 0 4px">코스는 Full 또는 10K(생략 시 Full), 예상페이스는 분:초/km (예: 5:30). 예) 김철수, 20456, 10K, 5:30</p>
   <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
   <label>대회 번호 (URL의 /133/ 부분)</label>
   <input id="evt">
@@ -86,8 +89,10 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <input id="intv" type="number" min="30">
   <label>출발 후 5K 통과 전 가정 페이스 (분/km)</label>
   <input id="dpace" type="number" step="0.1">
-  <label>코스 GPX 파일 (없으면 임시 코스 사용)</label>
+  <label>Full 코스 GPX (없으면 임시 코스 사용)</label>
   <input id="gpx" type="file" accept=".gpx">
+  <label>10K 코스 GPX (없으면 풀 코스 앞부분을 임시 사용)</label>
+  <input id="gpx10" type="file" accept=".gpx">
   <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
     <button id="save">저장하고 시작</button>
     <button class="g" id="demo">데모 재생 (2025 기록 기반)</button>
@@ -107,16 +112,16 @@ const KM_OF={'출발':0,'도착':TOTAL};for(let k=5;k<=40;k+=5)KM_OF[k+'K']=k;
 /* ★★★ 여기만 고치면 모든 접속자에게 같은 설정이 적용됩니다 ★★★
    (설정창에서 값을 맞춘 뒤 'DEFAULTS 코드 복사'를 누르면 이 블록 내용이 만들어집니다) */
 const DEFAULTS={
-  key:"6fab83be49525f2fb3e81fb2b305282d",
-  worker:"https://marathon-proxy.whdgmlwld.workers.dev",
-  evt:"133",
-  intv:60,
-  dpace:6.5,
-  crew:"전영준, 20123\n조인원, 26399\n김태완, 14768\n허남정, 19476",
-  route:null
+  key:"6fab83be49525f2fb3e81fb2b305282d",   // 카카오 JavaScript 키
+  worker:"https://marathon-proxy.whdgmlwld.workers.dev",  // Cloudflare Worker 주소
+  evt:"133",   // 대회 번호
+  intv:60,     // 갱신 주기(초, 최소 30)
+  dpace:6.5,   // 기본 페이스(분/km), 예상페이스 미입력 러너에 사용
+  crew:"전영준, 20123\n조인원, 26399\n김태완, 14768\n허남정, 19476",  // 이름, 배번[, 코스[, 예상페이스]]  예) 김철수, 20456, 10K, 5:30
+  routes:{full:null,'10k':null}  // 코스별 좌표 [[위도,경도],...] (없으면 임시 코스)
 };
 const USE_SAVED_SETTINGS=false; /* true면 각자 브라우저에 저장한 값이 DEFAULTS보다 우선 */
-let cfg=Object.assign({},DEFAULTS),gpxLoaded=!!DEFAULTS.route,sdkTried=false;
+let cfg=Object.assign({},DEFAULTS),sdkTried=false;
 if(USE_SAVED_SETTINGS){try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}}
 let runners=[],demo=null,timerPoll=null,focusBib=null,labels=true,map=null;
 
@@ -128,16 +133,28 @@ function now(){return demo?demo.t:kstNow()}
 
 /* ================= 코스 ================= */
 let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
-if(DEFAULTS.route&&DEFAULTS.route.length>1)route=DEFAULTS.route;
-let cum=[];
+const COURSES={
+  full:{label:'Full',total:42.195,route:route,cum:[],custom:false},
+  '10k':{label:'10K',total:10,route:null,cum:[],custom:false}
+};
+['full','10k'].forEach(k=>{const r=DEFAULTS.routes&&DEFAULTS.routes[k];if(r&&r.length>1){COURSES[k].route=r;COURSES[k].custom=true}});
+/* 코스별 체크포인트: 0, 5, 10, … , 마지막은 코스 총거리 */
+function cpList(cc){const T=COURSES[cc].total,a=[];for(let k=0;k<T-0.01;k+=5)a.push(k);a.push(T);return a}
 function hav(a,b){const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
-function prep(){cum=[0];for(let i=1;i<route.length;i++)cum.push(cum[i-1]+hav(route[i-1],route[i]))}
-function posAt(km){
-  const d=Math.max(0,Math.min(TOTAL,km))/TOTAL*cum[cum.length-1];
-  let i=1;while(i<cum.length-1&&cum[i]<d)i++;
-  const t=(d-cum[i-1])/((cum[i]-cum[i-1])||1);
-  return[route[i-1][0]+(route[i][0]-route[i-1][0])*t,route[i-1][1]+(route[i][1]-route[i-1][1])*t];
+function pathLen(rt){const c=[0];for(let i=1;i<rt.length;i++)c.push(c[i-1]+hav(rt[i-1],rt[i]));return c}
+function posOn(c,km){ /* 코스 c 위의 km 지점 좌표 (공식 거리를 폴리라인 길이에 비례 배분) */
+  const d=Math.max(0,Math.min(c.total,km))/c.total*c.cum[c.cum.length-1],p=c.route;
+  let i=1;while(i<c.cum.length-1&&c.cum[i]<d)i++;
+  const t=(d-c.cum[i-1])/((c.cum[i]-c.cum[i-1])||1);
+  return[p[i-1][0]+(p[i][0]-p[i-1][0])*t,p[i-1][1]+(p[i][1]-p[i-1][1])*t];
 }
+function prep(){
+  const f=COURSES.full,t=COURSES['10k'];
+  f.cum=pathLen(f.route);
+  if(!t.custom)t.route=Array.from({length:21},(_,i)=>posOn(f,i/20*10)); /* 10K GPX가 없으면 풀 코스 앞부분을 임시로 사용 */
+  t.cum=pathLen(t.route);
+}
+function posAt(km,cc){return posOn(COURSES[cc||'full'],km)}
 
 /* ================= 카카오맵 ================= */
 const LL=p=>new kakao.maps.LatLng(p[0],p[1]);
@@ -160,18 +177,27 @@ function initMap(){
 function drawRoute(){
   if(!map)return;
   routeObjs.forEach(o=>o.setMap(null));routeObjs=[];
-  routeObjs.push(new kakao.maps.Polyline({map,path:route.map(LL),strokeWeight:6,strokeColor:'#6b7280',strokeOpacity:.7,strokeStyle:'solid'}));
-  const add=(km,txt,cls)=>routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(km)),content:`<div class="cp ${cls||''}">${txt}</div>`,yAnchor:1.4,zIndex:1}));
-  for(let k=0;k<=40;k+=5)add(k,k?k+'K':'출발');
-  add(TOTAL,'도착','fin');
-  const b=new kakao.maps.LatLngBounds();route.forEach(p=>b.extend(LL(p)));map.setBounds(b);
+  const b=new kakao.maps.LatLngBounds();
+  ['full','10k'].forEach(cc=>{
+    const c=COURSES[cc],is10=cc==='10k',cps=cpList(cc);
+    routeObjs.push(new kakao.maps.Polyline({map,path:c.route.map(LL),strokeWeight:is10?5:6,strokeColor:is10?'#2563eb':'#6b7280',strokeOpacity:.65,strokeStyle:'solid'}));
+    cps.forEach((k,i)=>{
+      const last=i===cps.length-1,nm=i===0?'출발':last?'도착':k+'K';
+      routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(k,cc)),content:`<div class="cp ${is10?'t10':''} ${last?'fin':''}">${is10?'10K코스 ':''}${nm}</div>`,yAnchor:1.4,zIndex:1}));
+    });
+    c.route.forEach(p=>b.extend(LL(p)));
+  });
+  map.setBounds(b);
 }
-$('gpx').onchange=async e=>{
-  const f=e.target.files[0];if(!f)return;
-  const x=new DOMParser().parseFromString(await f.text(),'text/xml');
-  const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
-  if(pts.length>1){route=pts;gpxLoaded=true;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
-};
+function bindGpx(id,cc){
+  $(id).onchange=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    const x=new DOMParser().parseFromString(await f.text(),'text/xml');
+    const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
+    if(pts.length>1){COURSES[cc].route=pts;COURSES[cc].custom=true;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
+  };
+}
+bindGpx('gpx','full');bindGpx('gpx10','10k');
 
 /* ================= 데이터 파싱/조회 ================= */
 function parseSplits(text){
@@ -211,7 +237,11 @@ async function fetchBatch(list){
       const o=j.runners&&j.runners[r.bib];
       if(!o){r.err='응답 없음';return}
       if(o.err){r.err=o.err;return}
-      if(o.splits&&o.splits.length)r.splits=o.splits;
+      if(o.splits&&o.splits.length){
+        const T=COURSES[r.course].total,seen={};
+        /* 워커는 도착을 km=-1로 보냄 → 이 러너 코스의 총거리로 변환, 코스 거리를 넘는 값/중복은 제거 */
+        r.splits=o.splits.map(s=>s.km<0?{km:T,t:s.t}:s).filter(s=>s.km<=T+0.01&&!seen[s.km]&&(seen[s.km]=1));
+      }
       r.err=null;
     });
   }catch(e){list.forEach(r=>r.err=e.message||'실패')}
@@ -235,20 +265,21 @@ function startPolling(){
 
 /* ================= 위치 추정 ================= */
 function estimate(r,t){
+  const T=COURSES[r.course].total;
   const known=r.splits.filter(s=>s.t<=t);
   if(!known.length)return{km:0,state:'출발 전',conf:'wait'};
   const last=known[known.length-1];
-  if(last.km>=TOTAL){const st=r.splits[0].km===0?r.splits[0].t:null;return{km:TOTAL,state:'완주'+(st?' '+fmt(last.t-st):''),conf:'done',last}}
+  if(last.km>=T-0.01){const st=r.splits[0].km===0?r.splits[0].t:null;return{km:T,state:'완주'+(st?' '+fmt(last.t-st):''),conf:'done',last}}
   let pace;
   if(known.length>=2){
     const a=known[known.length-2],b=known[known.length-1];
     const p1=(b.t-a.t)/(b.km-a.km);
     if(known.length>=3){const c=known[known.length-3];const p0=(a.t-c.t)/(a.km-c.km);pace=p1*.7+p0*.3}else pace=p1;
-  }else pace=cfg.dpace*60;
-  const nextKm=Math.min(last.km+5,TOTAL);
+  }else pace=r.pace0||cfg.dpace*60; /* 측정 구간이 없으면 러너별 예상 페이스 → 없으면 기본 페이스 */
+  const nextKm=cpList(r.course).find(k=>k>last.km+0.01)||T;
   let km=last.km+(t-last.t)/pace;
   const stall=km>nextKm-0.05;km=Math.min(km,nextKm-0.05);
-  return{km,pace,last,state:(last.km?last.km+'K':'출발')+' 통과 '+fmt(last.t),conf:stall?'stall':'est'};
+  return{km,pace,last,state:(last.km?last.km+'K':'출발')+' 통과 '+fmt(last.t)+(known.length<2?(r.pace0?' · 예상페이스':' · 기본페이스'):''),conf:stall?'stall':'est'};
 }
 
 /* ================= 렌더링 ================= */
@@ -264,7 +295,7 @@ function render(){
   const rows=runners.map(r=>({r,e:estimate(r,t)}));
   if(map){
     rows.forEach(({r,e})=>{
-      const pos=LL(posAt(e.km));
+      const pos=LL(posAt(e.km,r.course));
       const ck=e.conf+(focusBib===r.bib?'h':'')+r.name;
       let o=mk.get(r.bib);
       const html=`<div class="mk ${e.conf==='est'?'est':''} ${focusBib===r.bib?'hl':''}" onclick="focusRunner('${r.bib}')"><i style="background:${r.color}"></i><span>${r.name}</span></div>`;
@@ -278,19 +309,21 @@ function render(){
     const pc=e.pace?`${Math.floor(e.pace/60)}:${String(Math.round(e.pace%60)).padStart(2,'0')}/km`:'-';
     const tg=r.err&&!r.splits.length?['err','조회실패']:({wait:['','대기'],est:['on','추정중'],stall:['','신호대기'],done:['','완주']})[e.conf];
     return`<div class="ri" data-b="${r.bib}"><span class="dot" style="background:${r.color}"></span>
-    <div><div class="nm">${r.name} <span class="mu">#${r.bib}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
+    <div><div class="nm">${r.name} <span class="mu">#${r.bib} · ${COURSES[r.course].label}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
     <span class="tag ${tg[0]}">${tg[1]}</span></div>`}).join('')||'<div class="ri mu">설정에서 크루를 추가하세요</div>';
   document.querySelectorAll('.ri[data-b]').forEach(el=>el.onclick=()=>focusRunner(el.dataset.b));
 }
 setInterval(render,1000);
 
 /* ================= 크루 구성 ================= */
+/* '5:30' / "5'30" → 330 (초/km), 형식이 아니면 null */
+function parsePace(s){const m=/^(\d{1,2})\s*[:'’]\s*(\d{1,2})$/.exec((s||'').trim());return m?(+m[1])*60+(+m[2]):null}
 function loadCrew(){
   mk.forEach(o=>o.setMap(null));mk.clear();
   const old=Object.fromEntries(runners.map(r=>[r.bib,r]));
   runners=cfg.crew.split('\n').map(l=>l.trim()).filter(Boolean).map((l,i)=>{
-    const[n,b]=l.split(/[,\t]/).map(s=>s.trim());const bib=b||n,name=b?n:('#'+n);
-    return old[bib]?Object.assign(old[bib],{name,_ck:null}):{name,bib,splits:[],color:`hsl(${(i*137.5)%360} 75% 45%)`,err:null};
+    const[n,b,c,p]=l.split(/[,\t]/).map(s=>s.trim());const bib=b||n,name=b?n:('#'+n),course=/10/.test(c||'')?'10k':'full',pace0=parsePace(p);
+    return old[bib]?Object.assign(old[bib],{name,course,pace0,_ck:null}):{name,bib,course,pace0,splits:[],color:`hsl(${(i*137.5)%360} 75% 45%)`,err:null};
   });
 }
 
@@ -301,7 +334,7 @@ function startDemo(){
   const base=parseSplits(SAMPLE),t0=base[0].t;
   runners.forEach((r,i)=>{
     const f=0.75+((i*37)%50)/100,off=((i*13)%240);
-    r.splits=base.map(s=>({km:s.km,t:Math.round(t0+off+(s.t-t0)*f)}));r.err=null});
+    r.splits=base.filter(s=>r.course==='10k'?s.km<=10:true).map(s=>({km:s.km,t:Math.round(t0+off+(s.t-t0)*f)}));r.err=null});
   demo={t:t0-120};
   demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>t0+22000)demo.t=t0-120}},500);
   $('stat').textContent='데모: 실제 시각 대신 가상 시계 사용';
@@ -324,7 +357,7 @@ $('save').onclick=()=>{
 };
 $('demo').onclick=()=>{
   cfg.key=$('key').value.trim()||cfg.key;
-  cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3\n크루D,4\n크루E,5\n크루F,6';
+  cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3,10K\n크루D,4\n크루E,5,10K\n크루F,6';
   if(demo)clearInterval(demo.iv);
   persist();loadCrew();startDemo();$('dlg').close();render();
 };
@@ -340,14 +373,15 @@ $('test').onclick=async()=>{
     const res=await fetch(url);
     const txt=await res.text();
     let sp=[];try{sp=(JSON.parse(txt).runners[bib]||{}).splits||[]}catch(e){}
-    out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km===TOTAL?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
+    out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km<0?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
   }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}`}
 };
 $('copydef').onclick=async()=>{
   const out=$('testout');out.style.display='block';
   const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
-  const rt=gpxLoaded?JSON.stringify(smp(route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null';
-  const code=`const DEFAULTS={\n  key:${JSON.stringify($('key').value.trim())},\n  worker:${JSON.stringify($('worker').value.trim())},\n  evt:${JSON.stringify($('evt').value.trim())},\n  intv:${+$('intv').value||60},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  route:${rt}\n};`;
+  const rtOf=cc=>COURSES[cc].custom?JSON.stringify(smp(COURSES[cc].route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null';
+  const rt=`{full:${rtOf('full')},'10k':${rtOf('10k')}}`;
+  const code=`const DEFAULTS={\n  key:${JSON.stringify($('key').value.trim())},\n  worker:${JSON.stringify($('worker').value.trim())},\n  evt:${JSON.stringify($('evt').value.trim())},\n  intv:${+$('intv').value||60},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  routes:${rt}\n};`;
   try{await navigator.clipboard.writeText(code);out.textContent='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.\n\n'+code}
   catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
 };
