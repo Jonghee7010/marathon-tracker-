@@ -60,33 +60,16 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   </span>
 </header>
 <main>
-  <div id="map"><div class="ph" id="ph">설정에서 카카오 JavaScript 키를 입력하면<br>지도가 표시됩니다.</div></div>
+  <div id="map"><div class="ph" id="ph">index.html의 DEFAULTS.key에<br>카카오 JavaScript 키를 넣어 주세요.</div></div>
   <aside id="list"></aside>
 </main>
 
 <dialog id="dlg">
   <h3 style="margin:0 0 4px">설정</h3>
 
-  <label>카카오 JavaScript 키</label>
-  <input id="key" placeholder="JavaScript 키 (REST API 키 아님)" autocomplete="off">
-  <p class="help">
-    ① <b>developers.kakao.com</b> → 내 애플리케이션 → 앱 만들기<br>
-    ② 앱 설정 → 플랫폼 → <b>Web</b> 사이트 도메인에 이 페이지를 띄울 주소 등록<br>
-    &nbsp;&nbsp;&nbsp;(예: <code>https://내아이디.github.io</code>, 로컬 테스트는 <code>http://localhost:5500</code>)<br>
-    ③ 앱 키에서 <b>JavaScript 키</b> 복사<br>
-    ④ 제품 설정에 <b>카카오맵</b> 항목이 있으면 사용 설정을 켜기<br>
-    ⚠ 파일을 더블클릭해서(file://) 열면 도메인 등록이 안 되어 지도가 뜨지 않아요.
-  </p>
-
   <label>크루 목록 (한 줄에 “이름, 배번, 코스, 예상페이스”)</label>
   <p class="help" style="margin:0 0 4px">코스는 Full 또는 10K(생략 시 Full), 예상페이스는 분:초/km (예: 5:30). 예) 김철수, 20456, 10K, 5:30</p>
   <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
-  <label>대회 번호 (URL의 /133/ 부분)</label>
-  <input id="evt">
-  <label>워커 주소 (Cloudflare Worker)</label>
-  <input id="worker" placeholder="https://marathon-proxy.내계정.workers.dev">
-  <label>갱신 주기 (초, 최소 30)</label>
-  <input id="intv" type="number" min="30">
   <label>출발 후 5K 통과 전 가정 페이스 (분/km)</label>
   <input id="dpace" type="number" step="0.1">
   <label>Full 코스 GPX (없으면 임시 코스 사용)</label>
@@ -101,7 +84,7 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
     <button class="g" id="close">닫기</button>
   </div>
   <pre id="testout" class="help" style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;display:none"></pre>
-  <p class="help">여기서 바꾼 값은 이 화면에서만 임시로 적용돼요(새로고침하면 사라짐). 모든 접속자에게 적용하려면 “DEFAULTS 코드 복사”를 누른 뒤 index.html의 <code>const DEFAULTS={…};</code> 부분을 그 내용으로 교체하세요.</p>
+  <p class="help">카카오 키·워커 주소·대회 번호·갱신 주기는 index.html의 <code>DEFAULTS</code>에서만 바꿔요. 여기서 바꾼 값은 이 화면에서만 임시로 적용돼요(새로고침하면 사라짐). 모든 접속자에게 적용하려면 “DEFAULTS 코드 복사”를 누른 뒤 index.html의 <code>const DEFAULTS={…};</code> 부분을 그 내용으로 교체하세요.</p>
 </dialog>
 
 <script>
@@ -342,21 +325,19 @@ function startDemo(){
 
 /* ================= UI ================= */
 function fill(){
-  $('key').value=cfg.key;$('crew').value=cfg.crew;$('evt').value=cfg.evt;$('worker').value=cfg.worker;
-  $('intv').value=cfg.intv;$('dpace').value=cfg.dpace;
+  $('crew').value=cfg.crew;$('dpace').value=cfg.dpace;
 }
 function persist(){if(USE_SAVED_SETTINGS){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}}
 $('cfg').onclick=()=>{fill();$('dlg').showModal()};
 $('close').onclick=()=>$('dlg').close();
 $('save').onclick=()=>{
-  cfg={key:$('key').value.trim(),crew:$('crew').value,evt:$('evt').value.trim(),worker:$('worker').value.trim(),intv:+$('intv').value||60,dpace:+$('dpace').value||6.5};
+  cfg=Object.assign({},cfg,{crew:$('crew').value,dpace:+$('dpace').value||6.5}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
   persist();
   if(cfg.key&&!map&&!sdkTried)initMap();
   if(demo){clearInterval(demo.iv);demo=null}
   loadCrew();$('dlg').close();render();startPolling();
 };
 $('demo').onclick=()=>{
-  cfg.key=$('key').value.trim()||cfg.key;
   cfg.crew=$('crew').value||'크루A,1\n크루B,2\n크루C,3,10K\n크루D,4\n크루E,5,10K\n크루F,6';
   if(demo)clearInterval(demo.iv);
   persist();loadCrew();startDemo();$('dlg').close();render();
@@ -366,7 +347,7 @@ $('test').onclick=async()=>{
   const first=$('crew').value.split('\n').map(s=>s.trim()).filter(Boolean)[0]||'';
   const bib=(first.split(/[,\t]/)[1]||first).trim();
   if(!bib){out.textContent='크루 목록 첫 줄에 “이름, 배번”을 넣어 주세요.';return}
-  const c={worker:$('worker').value.trim(),evt:$('evt').value.trim()};
+  const c={worker:cfg.worker,evt:cfg.evt};
   if(!c.worker){out.textContent='워커 주소를 입력해 주세요.';return}
   const url=batchUrl([bib],c);
   try{
@@ -381,7 +362,7 @@ $('copydef').onclick=async()=>{
   const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
   const rtOf=cc=>COURSES[cc].custom?JSON.stringify(smp(COURSES[cc].route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null';
   const rt=`{full:${rtOf('full')},'10k':${rtOf('10k')}}`;
-  const code=`const DEFAULTS={\n  key:${JSON.stringify($('key').value.trim())},\n  worker:${JSON.stringify($('worker').value.trim())},\n  evt:${JSON.stringify($('evt').value.trim())},\n  intv:${+$('intv').value||60},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  routes:${rt}\n};`;
+  const code=`const DEFAULTS={\n  key:${JSON.stringify(cfg.key)},\n  worker:${JSON.stringify(cfg.worker)},\n  evt:${JSON.stringify(cfg.evt)},\n  intv:${cfg.intv},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  routes:${rt}\n};`;
   try{await navigator.clipboard.writeText(code);out.textContent='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.\n\n'+code}
   catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
 };
@@ -391,7 +372,7 @@ $('dlg').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTar
 
 prep();loadCrew();render();initMap();
 if(cfg.crew.trim())startPolling();
-if(!cfg.key||!cfg.crew.trim()||!cfg.worker){fill();$('dlg').showModal()}
+if(!cfg.crew.trim()){fill();$('dlg').showModal()}
 </script>
 </body>
 </html>
