@@ -80,15 +80,8 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
   <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
   <label>대회 번호 (URL의 /133/ 부분)</label>
   <input id="evt">
-  <label>기록 사이트 주소 (끝에 / 없이)</label>
-  <input id="base">
-  <label>CORS 프록시 (브라우저에서 직접 호출이 막힐 때)</label>
-  <select id="proxy">
-    <option value="https://corsproxy.io/?url=">corsproxy.io</option>
-    <option value="https://api.allorigins.win/raw?url=">allorigins</option>
-    <option value="">사용 안 함 (직접 호출 / 내 프록시 주소를 아래에)</option>
-  </select>
-  <input id="proxyCustom" placeholder="내 프록시 주소 (예: https://내워커.workers.dev/?url=)" style="margin-top:6px">
+  <label>워커 주소 (Cloudflare Worker)</label>
+  <input id="worker" placeholder="https://marathon-proxy.내계정.workers.dev">
   <label>갱신 주기 (초, 최소 30)</label>
   <input id="intv" type="number" min="30">
   <label>출발 후 5K 통과 전 가정 페이스 (분/km)</label>
@@ -99,10 +92,11 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
     <button id="save">저장하고 시작</button>
     <button class="g" id="demo">데모 재생 (2025 기록 기반)</button>
     <button class="g" id="test">연결 테스트</button>
+    <button class="g" id="copydef">DEFAULTS 코드 복사</button>
     <button class="g" id="close">닫기</button>
   </div>
   <pre id="testout" class="help" style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;display:none"></pre>
-  <p class="help">설정은 이 브라우저(localStorage)에 저장됩니다. 키를 바꾸면 페이지가 새로고침돼요.</p>
+  <p class="help">여기서 바꾼 값은 이 화면에서만 임시로 적용돼요(새로고침하면 사라짐). 모든 접속자에게 적용하려면 “DEFAULTS 코드 복사”를 누른 뒤 index.html의 <code>const DEFAULTS={…};</code> 부분을 그 내용으로 교체하세요.</p>
 </dialog>
 
 <script>
@@ -110,8 +104,20 @@ dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
 const TOTAL=42.195;
 const $=id=>document.getElementById(id);
 const KM_OF={'출발':0,'도착':TOTAL};for(let k=5;k<=40;k+=5)KM_OF[k+'K']=k;
-let cfg={key:'',crew:'',evt:'133',base:'https://runable.myresult.co.kr',proxy:'',proxyCustom:'',intv:60,dpace:6.5};
-try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}
+/* ★★★ 여기만 고치면 모든 접속자에게 같은 설정이 적용됩니다 ★★★
+   (설정창에서 값을 맞춘 뒤 'DEFAULTS 코드 복사'를 누르면 이 블록 내용이 만들어집니다) */
+const DEFAULTS={
+  key:'',     // 카카오 JavaScript 키
+  worker:'',  // 예: 'https://marathon-proxy.내계정.workers.dev'
+  evt:'133',  // 대회 번호
+  intv:60,    // 갱신 주기(초, 최소 30)
+  dpace:6.5,  // 5K 통과 전 가정 페이스(분/km)
+  crew:'',    // 한 줄에 '이름, 배번'  예) '홍길동, 20123\n김철수, 20456'
+  route:null  // 코스 좌표 [[위도,경도],...] (없으면 임시 코스)
+};
+const USE_SAVED_SETTINGS=false; /* true면 각자 브라우저에 저장한 값이 DEFAULTS보다 우선 */
+let cfg=Object.assign({},DEFAULTS),gpxLoaded=!!DEFAULTS.route,sdkTried=false;
+if(USE_SAVED_SETTINGS){try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}}
 let runners=[],demo=null,timerPoll=null,focusBib=null,labels=true,map=null;
 
 /* ================= 시간 유틸 ================= */
@@ -122,6 +128,7 @@ function now(){return demo?demo.t:kstNow()}
 
 /* ================= 코스 ================= */
 let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
+if(DEFAULTS.route&&DEFAULTS.route.length>1)route=DEFAULTS.route;
 let cum=[];
 function hav(a,b){const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function prep(){cum=[0];for(let i=1;i<route.length;i++)cum.push(cum[i-1]+hav(route[i-1],route[i]))}
@@ -137,6 +144,7 @@ const LL=p=>new kakao.maps.LatLng(p[0],p[1]);
 let routeObjs=[];
 function initMap(){
   if(!cfg.key){$('ph').style.display='flex';return}
+  sdkTried=true;
   $('ph').innerHTML='지도 불러오는 중…';
   const s=document.createElement('script');
   s.src=`https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(cfg.key)}&autoload=false`;
@@ -162,7 +170,7 @@ $('gpx').onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
   const x=new DOMParser().parseFromString(await f.text(),'text/xml');
   const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
-  if(pts.length>1){route=pts;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
+  if(pts.length>1){route=pts;gpxLoaded=true;prep();drawRoute();render()}else alert('GPX에서 좌표를 찾지 못했어요');
 };
 
 /* ================= 데이터 파싱/조회 ================= */
@@ -190,25 +198,32 @@ function parseAny(txt){
   try{return parseRecords(JSON.parse(txt))}catch(e){}
   return parseSplits(htmlText(txt)); /* 공개 기록 페이지 HTML: 태그를 공백으로 바꾼 뒤 구간/시각 쌍 추출 */
 }
-function urlFor(bib,c){
+function batchUrl(bibs,c){
   c=c||cfg;
-  const target=`${c.base}/${c.evt}/${bib}`;
-  const px=c.proxyCustom||c.proxy;
-  return px?px+encodeURIComponent(target):target;
+  return `${String(c.worker).replace(/\/+$/,'')}/?event=${encodeURIComponent(c.evt)}&bibs=${bibs.map(encodeURIComponent).join(',')}`;
 }
-async function fetchOne(r){
+async function fetchBatch(list){
   try{
-    const res=await fetch(urlFor(r.bib),{cache:'no-store'});
+    const res=await fetch(batchUrl(list.map(r=>r.bib)));
     if(!res.ok)throw new Error('HTTP '+res.status);
-    const sp=parseAny(await res.text());
-    if(sp.length)r.splits=sp;
-    r.err=null;
-  }catch(e){r.err=e.message||'실패'}
+    const j=await res.json();
+    list.forEach(r=>{
+      const o=j.runners&&j.runners[r.bib];
+      if(!o){r.err='응답 없음';return}
+      if(o.err){r.err=o.err;return}
+      if(o.splits&&o.splits.length)r.splits=o.splits;
+      r.err=null;
+    });
+  }catch(e){list.forEach(r=>r.err=e.message||'실패')}
 }
+let polling=false;
 async function pollAll(){
-  if(demo)return;
+  if(demo||polling)return;
+  if(!cfg.worker){$('stat').textContent='워커 주소를 설정하세요';return}
+  polling=true;
   $('stat').textContent='갱신 중…';
-  for(const r of runners){await fetchOne(r);render();await new Promise(s=>setTimeout(s,300))}
+  for(let i=0;i<runners.length;i+=40)await fetchBatch(runners.slice(i,i+40));
+  polling=false;render();
   const bad=runners.filter(r=>r.err).length;
   $('stat').textContent=`마지막 갱신 ${fmt(kstNow())}`+(bad?` · 실패 ${bad}명`:'');
 }
@@ -263,7 +278,7 @@ function render(){
     const pc=e.pace?`${Math.floor(e.pace/60)}:${String(Math.round(e.pace%60)).padStart(2,'0')}/km`:'-';
     const tg=r.err&&!r.splits.length?['err','조회실패']:({wait:['','대기'],est:['on','추정중'],stall:['','신호대기'],done:['','완주']})[e.conf];
     return`<div class="ri" data-b="${r.bib}"><span class="dot" style="background:${r.color}"></span>
-    <div><div class="nm">${r.name} <span class="mu">#${r.bib}</span></div><div class="mu">${e.state} · ${e.km.toFixed(1)}km · ${pc}</div></div>
+    <div><div class="nm">${r.name} <span class="mu">#${r.bib}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
     <span class="tag ${tg[0]}">${tg[1]}</span></div>`}).join('')||'<div class="ri mu">설정에서 크루를 추가하세요</div>';
   document.querySelectorAll('.ri[data-b]').forEach(el=>el.onclick=()=>focusRunner(el.dataset.b));
 }
@@ -294,17 +309,16 @@ function startDemo(){
 
 /* ================= UI ================= */
 function fill(){
-  $('key').value=cfg.key;$('crew').value=cfg.crew;$('evt').value=cfg.evt;$('base').value=cfg.base;
-  $('proxy').value=cfg.proxy;$('proxyCustom').value=cfg.proxyCustom;$('intv').value=cfg.intv;$('dpace').value=cfg.dpace;
+  $('key').value=cfg.key;$('crew').value=cfg.crew;$('evt').value=cfg.evt;$('worker').value=cfg.worker;
+  $('intv').value=cfg.intv;$('dpace').value=cfg.dpace;
 }
-function persist(){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}
+function persist(){if(USE_SAVED_SETTINGS){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}}
 $('cfg').onclick=()=>{fill();$('dlg').showModal()};
 $('close').onclick=()=>$('dlg').close();
 $('save').onclick=()=>{
-  const oldKey=cfg.key;
-  cfg={key:$('key').value.trim(),crew:$('crew').value,evt:$('evt').value.trim(),base:$('base').value.trim().replace(/\/$/,''),proxy:$('proxy').value,proxyCustom:$('proxyCustom').value.trim(),intv:+$('intv').value||60,dpace:+$('dpace').value||6.5};
+  cfg={key:$('key').value.trim(),crew:$('crew').value,evt:$('evt').value.trim(),worker:$('worker').value.trim(),intv:+$('intv').value||60,dpace:+$('dpace').value||6.5};
   persist();
-  if(cfg.key!==oldKey){location.reload();return}
+  if(cfg.key&&!map&&!sdkTried)initMap();
   if(demo){clearInterval(demo.iv);demo=null}
   loadCrew();$('dlg').close();render();startPolling();
 };
@@ -319,14 +333,23 @@ $('test').onclick=async()=>{
   const first=$('crew').value.split('\n').map(s=>s.trim()).filter(Boolean)[0]||'';
   const bib=(first.split(/[,\t]/)[1]||first).trim();
   if(!bib){out.textContent='크루 목록 첫 줄에 “이름, 배번”을 넣어 주세요.';return}
-  const c={base:$('base').value.trim().replace(/\/$/,''),evt:$('evt').value.trim(),proxy:$('proxy').value,proxyCustom:$('proxyCustom').value.trim()};
-  const url=urlFor(bib,c);
+  const c={worker:$('worker').value.trim(),evt:$('evt').value.trim()};
+  if(!c.worker){out.textContent='워커 주소를 입력해 주세요.';return}
+  const url=batchUrl([bib],c);
   try{
-    const res=await fetch(url,{cache:'no-store'});
+    const res=await fetch(url);
     const txt=await res.text();
-    const sp=parseAny(txt);
+    let sp=[];try{sp=(JSON.parse(txt).runners[bib]||{}).splits||[]}catch(e){}
     out.textContent=`요청: ${url}\n상태: ${res.status}\n추출된 통과기록: ${sp.length}개\n`+sp.map(s=>`  ${s.km===0?'출발':s.km===TOTAL?'도착':s.km+'K'}  ${fmt(s.t)}`).join('\n')+`\n\n--- 응답 앞부분 ---\n`+txt.slice(0,1500);
-  }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}\n(CORS 차단이면 프록시가 필요합니다)`}
+  }catch(e){out.textContent=`요청: ${url}\n실패: ${e.message}`}
+};
+$('copydef').onclick=async()=>{
+  const out=$('testout');out.style.display='block';
+  const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
+  const rt=gpxLoaded?JSON.stringify(smp(route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null';
+  const code=`const DEFAULTS={\n  key:${JSON.stringify($('key').value.trim())},\n  worker:${JSON.stringify($('worker').value.trim())},\n  evt:${JSON.stringify($('evt').value.trim())},\n  intv:${+$('intv').value||60},\n  dpace:${+$('dpace').value||6.5},\n  crew:${JSON.stringify($('crew').value)},\n  route:${rt}\n};`;
+  try{await navigator.clipboard.writeText(code);out.textContent='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.\n\n'+code}
+  catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
 };
 $('refresh').onclick=()=>{if(!demo)pollAll()};
 $('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
@@ -334,7 +357,7 @@ $('dlg').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTar
 
 prep();loadCrew();render();initMap();
 if(cfg.crew.trim())startPolling();
-if(!cfg.key||!cfg.crew.trim()){fill();$('dlg').showModal()}
+if(!cfg.key||!cfg.crew.trim()||!cfg.worker){fill();$('dlg').showModal()}
 </script>
 </body>
 </html>
