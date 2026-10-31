@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URC JTBC 마라톤 라이브 트래커</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1a1d23;--mu:#6b7280;--bd:#e3e6ea;--ac:#e8421f}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2026;--tx:#eceef1;--mu:#98a0ab;--bd:#2d3139;--ac:#ff6a47}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;font-size:14px;display:flex;flex-direction:column}
+header{padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header b{font-size:16px}
+.clock{font-variant-numeric:tabular-nums;font-weight:700}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+main{flex:1;display:flex;min-height:0}
+#map{flex:1;min-height:300px;position:relative}
+.ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:var(--mu);line-height:1.6}
+aside{width:340px;max-width:45vw;overflow:auto;background:var(--card);border-left:1px solid var(--bd)}
+.ri{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--bd);cursor:pointer}
+.ri:hover{background:var(--bg)}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.nm{font-weight:600}
+.mu{color:var(--mu);font-size:12px}
+.tag{margin-left:auto;font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd);color:var(--mu);white-space:nowrap}
+.tag.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.tag.err{border-color:#c00;color:#c00}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px;width:min(580px,94vw);max-height:92vh;overflow:auto}
+dialog label{display:block;margin:10px 0 4px;font-weight:600;font-size:13px}
+dialog input,dialog textarea,dialog select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit}
+dialog textarea{height:130px;font-family:ui-monospace,monospace;font-size:13px}
+dialog .help{font-size:12px;color:var(--mu);line-height:1.6;margin:4px 0 0}
+/* 지도 오버레이 */
+.mk{display:flex;align-items:center;gap:3px;cursor:pointer}
+.mk i{width:14px;height:14px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 0 3px #0008;flex:none}
+.mk.est i{animation:p 1.6s infinite}
+.mk span{font-size:11px;font-weight:700;background:#fffe;color:#111;border-radius:4px;padding:0 3px;white-space:nowrap;box-shadow:0 0 2px #0004}
+.mk.hl i{width:20px;height:20px}
+.mk.hl span{background:#ffe14d}
+.lbl-off .mk span{display:none}
+.cp{font-size:11px;background:#fff;color:#444;border:1px solid #aaa;border-radius:10px;padding:0 6px;white-space:nowrap;box-shadow:0 0 2px #0004}
+.cp.fin{background:#16a34a;color:#fff;border-color:#16a34a}
+.dev-only{display:none!important}
+body.dev .dev-only{display:inline-block!important}
+@keyframes p{50%{box-shadow:0 0 0 7px #e8421f33}}
+@media (max-width:700px){main{flex-direction:column}aside{width:100%;max-width:none;height:40%;border-left:0;border-top:1px solid var(--bd)}}
+</style>
+</head>
+<body>
+<header>
+  <b>🏃 URC JTBC 라이브 트래커</b>
+  <span class="clock" id="clk">--:--:--</span>
+  <span class="mu" id="stat"></span>
+  <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="g dev-only" id="adjbtn">코스 보정</button>
+    <button class="g dev-only" id="lbl">이름 숨기기</button>
+    <button class="g dev-only" id="refresh">지금 갱신</button>
+    <button class="g" id="demo">데모 재생</button>
+    <button id="cfg">설정</button>
+  </span>
+</header>
+<main>
+  <div id="map"><div class="ph" id="ph">index.html의 DEFAULTS.key에<br>카카오 JavaScript 키를 넣어 주세요.</div></div>
+  <aside id="list"></aside>
+</main>
+
+<div id="adj" style="display:none;position:fixed;left:10px;bottom:10px;z-index:1000;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px;padding:10px;max-width:calc(100vw - 20px);max-height:80vh;overflow:auto;box-shadow:0 2px 12px #0006">
+  <b>코스 위치 보정</b>
+  <div class="mu" style="margin:2px 0 6px">화살표로 코스를 옮겨 지도의 도로와 맞추세요. 이동 단위
+    <select id="shstep" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:6px"><option>10</option><option selected>50</option><option>200</option></select> m</div>
+  <div class="adjrow" data-c="10k" style="display:flex;gap:6px;align-items:center;margin:4px 0"><span style="width:44px;font-weight:600">10K</span><button class="g" data-d="w">←</button><button class="g" data-d="n">↑</button><button class="g" data-d="s">↓</button><button class="g" data-d="e">→</button><span class="mu" id="off-10k"></span></div>
+  <div class="adjrow" data-c="full" style="display:flex;gap:6px;align-items:center;margin:4px 0"><span style="width:44px;font-weight:600">Full</span><button class="g" data-d="w">←</button><button class="g" data-d="n">↑</button><button class="g" data-d="s">↓</button><button class="g" data-d="e">→</button><span class="mu" id="off-full"></span></div>
+  <div style="border-top:1px solid var(--bd);margin-top:8px;padding-top:8px">
+    <b>경로 편집</b> <span class="mu">GPX 경로를 고쳐서 다시 내려받기</span>
+    <div style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+      <select id="edcc" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:4px"><option value="10k">10K</option><option value="full">Full</option></select>
+      <button id="edtoggle">편집 시작</button>
+      <button class="g" id="edgpx">GPX 내려받기</button>
+    </div>
+    <div id="edtools" style="display:none">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label><input type="radio" name="edmode" value="move" checked> 이동</label>
+        <label><input type="radio" name="edmode" value="add"> 추가</label>
+        <label><input type="radio" name="edmode" value="del"> 삭제</label>
+        <button class="g" id="edundo">되돌리기</button>
+      </div>
+      <div class="mu" style="margin-top:4px">이동: 점을 끌기 · 추가: 지도(선 근처)를 클릭 · 삭제: 점을 클릭</div>
+    </div>
+    <div class="mu" id="edinfo" style="margin-top:4px"></div>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button id="adjcopy">보정 반영해서 DEFAULTS 복사</button><button class="g" id="adjreset">초기화</button></div>
+  <pre id="adjout" class="mu" style="display:none;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;margin:6px 0 0"></pre>
+</div>
+
+<dialog id="dlg">
+  <h3 style="margin:0 0 4px">설정</h3>
+
+  <label>크루 목록 (한 줄에 “이름, 배번, 코스, 예상페이스”)</label>
+  <p class="help" style="margin:0 0 4px">코스는 Full 또는 10K(생략 시 Full), 예상페이스는 분:초/km (예: 5:30). 예) 김철수, 20456, 10K, 5:30</p>
+  <textarea id="crew" placeholder="홍길동, 20123&#10;김철수, 20456"></textarea>
+  <label>Full 코스 GPX (없으면 임시 코스 사용)</label>
+  <input id="gpx" type="file" accept=".gpx">
+  <label>10K 코스 GPX (없으면 풀 코스 앞부분을 임시 사용)</label>
+  <input id="gpx10" type="file" accept=".gpx">
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+    <button id="save">저장하고 시작</button>
+    <button class="g" id="copydef">DEFAULTS 코드 복사</button>
+    <button class="g" id="close">닫기</button>
+  </div>
+  <pre id="testout" class="help" style="white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;display:none"></pre>
+  <p class="help">카카오 키·워커 주소·대회 번호·갱신 주기는 index.html의 <code>DEFAULTS</code>에서만 바꿔요. 여기서 바꾼 값은 이 화면에서만 임시로 적용돼요(새로고침하면 사라짐). 모든 접속자에게 적용하려면 “DEFAULTS 코드 복사”를 누른 뒤 index.html의 <code>const DEFAULTS={…};</code> 부분을 그 내용으로 교체하세요.</p>
+</dialog>
+
+<script>
+/* ================= 설정/상태 ================= */
+const TOTAL=42.195;
+const $=id=>document.getElementById(id);
+const KM_OF={'출발':0,'도착':TOTAL};for(let k=5;k<=40;k+=5)KM_OF[k+'K']=k;
+/* ★★★ 여기만 고치면 모든 접속자에게 같은 설정이 적용됩니다 ★★★
+   (설정창에서 값을 맞춘 뒤 'DEFAULTS 코드 복사'를 누르면 이 블록 내용이 만들어집니다) */
+const DEFAULTS={
+  key:"6fab83be49525f2fb3e81fb2b305282d",
+  worker:"https://marathon-proxy.whdgmlwld.workers.dev",
+  evt:"177",
+  intv:30,
+  dpace:6.0,
+  crew:"변재현, 26336, Full, 5:40",
+  routes:{full:[[37.57159,126.97717],[37.57049,126.9771],[37.57028,126.97708],[37.57005,126.97706],[37.56905,126.97704],[37.5671,126.97711],[37.56664,126.97712],[37.56464,126.97706],[37.56435,126.97695],[37.56384,126.97677],[37.56243,126.97624],[37.56106,126.97573],[37.56081,126.97559],[37.56076,126.97561],[37.56064,126.97569],[37.56057,126.97573],[37.56055,126.9759],[37.56053,126.97607],[37.56052,126.97619],[37.56052,126.9763],[37.56055,126.97641],[37.56086,126.97733],[37.56114,126.97871],[37.56126,126.97934],[37.56142,126.98017],[37.56166,126.9809],[37.56177,126.98111],[37.56185,126.98115],[37.56192,126.98115],[37.56208,126.98106],[37.56255,126.98063],[37.56324,126.98005],[37.56393,126.97947],[37.56485,126.97856],[37.56491,126.97852],[37.56512,126.97853],[37.56571,126.97882],[37.56584,126.97888],[37.56588,126.97894],[37.56593,126.9791],[37.56595,126.97918],[37.56595,126.98033],[37.56596,126.9805],[37.56596,126.98067],[37.56596,126.98084],[37.56596,126.98101],[37.56596,126.98118],[37.56596,126.98135],[37.56596,126.98153],[37.56596,126.9817],[37.56596,126.98186],[37.56596,126.98204],[37.56597,126.98221],[37.56597,126.98238],[37.56597,126.98255],[37.56597,126.98267],[37.566,126.98341],[37.56603,126.98547],[37.56607,126.9873],[37.56607,126.98752],[37.56609,126.98796],[37.56627,126.99202],[37.56642,126.99498],[37.56644,126.9955],[37.56657,126.99549],[37.56655,126.99507],[37.56647,126.99341],[37.56634,126.99089],[37.56623,126.98795],[37.56622,126.98751],[37.56618,126.98645],[37.56609,126.9838],[37.56612,126.98369],[37.56615,126.98352],[37.56618,126.98342],[37.56624,126.98327],[37.56629,126.98314],[37.56635,126.98305],[37.56644,126.98292],[37.56652,126.98279],[37.56679,126.98276],[37.56853,126.9828],[37.56861,126.9828],[37.56867,126.98295],[37.56836,126.98488],[37.56802,126.98663],[37.56799,126.98766],[37.56798,126.98818],[37.568,126.98958],[37.56808,126.99093],[37.56829,126.99375],[37.56838,126.99479],[37.56841,126.99518],[37.56852,126.99631],[37.56894,126.99898],[37.56914,127.00024],[37.56936,127.0015],[37.56943,127.00204],[37.56948,127.00268],[37.56947,127.00663],[37.56963,127.00936],[37.56961,127.00995],[37.5696,127.01115],[37.56958,127.01247],[37.5696,127.01461],[37.56962,127.01587],[37.5696,127.01617],[37.56985,127.01705],[37.57081,127.01908],[37.57115,127.01973],[37.57156,127.02079],[37.57163,127.02128],[37.57163,127.02238],[37.57145,127.02345],[37.57103,127.02484],[37.57061,127.0263],[37.57056,127.02646],[37.57057,127.02653],[37.57059,127.02659],[37.57072,127.02665],[37.5708,127.02669],[37.57093,127.02669],[37.57099,127.02665],[37.57107,127.02657],[37.57194,127.02353],[37.57201,127.02321],[37.57215,127.02233],[37.57214,127.0216],[37.57174,127.01988],[37.57123,127.01886],[37.57026,127.01695],[37.57002,127.01586],[37.57,127.01442],[37.56997,127.01249],[37.56995,127.00999],[37.56996,127.0096],[37.56994,127.00924],[37.56979,127.00505],[37.56979,127.00279],[37.56971,127.00154],[37.56944,127.00015],[37.56917,126.99885],[37.56899,126.99792],[37.56875,126.99554],[37.56869,126.99444],[37.56855,126.99237],[37.56848,126.99163],[37.5684,126.99061],[37.56833,126.98961],[37.56831,126.98767],[37.56831,126.98734],[37.56853,126.98574],[37.56879,126.98442],[37.56907,126.98279],[37.5692,126.9807],[37.56929,126.97939],[37.56936,126.97933],[37.56973,126.97932],[37.57014,126.97946],[37.57013,126.98121],[37.57015,126.98283],[37.57015,126.98311],[37.57017,126.98403],[37.57016,126.98605],[37.57017,126.98764],[37.57017,126.98818],[37.57022,126.98945],[37.57033,126.99089],[37.57041,126.99217],[37.57046,126.99328],[37.57049,126.99482],[37.57056,126.99601],[37.57066,126.99708],[37.57069,126.99788],[37.57075,126.99922],[37.57083,127.0004],[37.57087,127.00111],[37.57097,127.00272],[37.57099,127.00367],[37.57106,127.00572],[37.57107,127.00643],[37.57109,127.00837],[37.57127,127.00914],[37.57166,127.01085],[37.57196,127.01226],[37.57218,127.01305],[37.57286,127.01532],[37.57301,127.01587],[37.57331,127.01712],[37.5734,127.01733],[37.57347,127.01757],[37.57388,127.01889],[37.57477,127.0214],[37.57528,127.02266],[37.57537,127.02305],[37.5753,127.02369],[37.57432,127.02572],[37.57399,127.02643],[37.57384,127.02775],[37.57386,127.02882],[37.57387,127.03056],[37.57388,127.03099],[37.57392,127.03274],[37.57393,127.03317],[37.57395,127.03427],[37.57397,127.03497],[37.57401,127.03714],[37.574,127.03808],[37.57342,127.04001],[37.57286,127.04179],[37.57122,127.04564],[37.56996,127.04831],[37.56966,127.04869],[37.56823,127.05057],[37.56807,127.05093],[37.56737,127.05188],[37.56629,127.05332],[37.56536,127.05446],[37.56515,127.0548],[37.56401,127.05637],[37.56287,127.05794],[37.56258,127.05836],[37.56221,127.05917],[37.562,127.0601],[37.56175,127.06207],[37.56151,127.06382],[37.56139,127.06462],[37.56112,127.06648],[37.56088,127.06816],[37.56065,127.06986],[37.56053,127.07067],[37.56,127.0721],[37.5596,127.07311],[37.55929,127.07381],[37.5588,127.07507],[37.55815,127.07675],[37.55739,127.07868],[37.55719,127.0792],[37.55712,127.07927],[37.55706,127.07932],[37.55696,127.07931],[37.55641,127.07901],[37.5556,127.07855],[37.55436,127.07788],[37.55355,127.07746],[37.55235,127.07688],[37.55111,127.07632],[37.55037,127.07601],[37.54798,127.0746],[37.54744,127.07421],[37.5472,127.074],[37.54594,127.07339],[37.5453,127.07309],[37.54437,127.07257],[37.54315,127.07199],[37.54225,127.07157],[37.5412,127.07106],[37.54052,127.07076],[37.54038,127.07075],[37.54029,127.07075],[37.5402,127.07077],[37.54006,127.0708],[37.53993,127.07083],[37.53986,127.07085],[37.53976,127.07091],[37.53878,127.07412],[37.53866,127.07457],[37.53803,127.07714],[37.53757,127.07894],[37.53712,127.08075],[37.53674,127.08232],[37.53657,127.08309],[37.53616,127.08356],[37.53454,127.08415],[37.53323,127.08469],[37.53219,127.08539],[37.53115,127.08618],[37.53071,127.08651],[37.52959,127.08742],[37.52763,127.08886],[37.52169,127.09349],[37.52129,127.09374],[37.51876,127.09582],[37.51619,127.09779],[37.5154,127.09835],[37.51477,127.0988],[37.51326,127.09991],[37.51261,127.10046],[37.5123,127.10072],[37.51115,127.10164],[37.51007,127.1026],[37.50992,127.10274],[37.50886,127.10374],[37.50844,127.1036],[37.50806,127.10295],[37.50755,127.10203],[37.50659,127.09964],[37.50643,127.09843],[37.50645,127.09793],[37.50659,127.09696],[37.50703,127.09422],[37.50736,127.09194],[37.50749,127.09111],[37.50746,127.09068],[37.5071,127.09038],[37.50538,127.08893],[37.50505,127.08865],[37.50431,127.08799],[37.50279,127.08671],[37.50156,127.08557],[37.50107,127.0849],[37.50007,127.08178],[37.49966,127.08032],[37.49899,127.07799],[37.49863,127.07686],[37.49796,127.07446],[37.49766,127.07349],[37.49695,127.07118],[37.4971,127.0721],[37.49751,127.0735],[37.49755,127.07364],[37.49759,127.0738],[37.49764,127.07396],[37.49769,127.07412],[37.49773,127.07428],[37.49778,127.07444],[37.49783,127.0746],[37.49787,127.07476],[37.49792,127.07492],[37.49797,127.07507],[37.498,127.07512],[37.49912,127.07913],[37.49916,127.08043],[37.49863,127.08249],[37.49796,127.08469],[37.49681,127.08804],[37.49454,127.09488],[37.49421,127.09565],[37.49382,127.09617],[37.49334,127.0966],[37.49181,127.09763],[37.49181,127.09763],[37.49154,127.09805],[37.49156,127.09835],[37.49185,127.09877],[37.49229,127.09902],[37.49306,127.10032],[37.49408,127.10357],[37.4943,127.10431],[37.49498,127.10665],[37.49523,127.10759],[37.49571,127.10911],[37.4962,127.11065],[37.49681,127.11241],[37.49756,127.11389],[37.49785,127.11449],[37.49877,127.11607],[37.49903,127.11652],[37.49961,127.11751],[37.50029,127.1188],[37.50084,127.11971],[37.50187,127.12103],[37.50338,127.12271],[37.50453,127.12348],[37.50684,127.12493],[37.50869,127.12609],[37.51152,127.12785],[37.5118,127.12802],[37.5119,127.12808],[37.51389,127.12939],[37.51596,127.1308],[37.51736,127.13174],[37.51833,127.13239],[37.52015,127.13341],[37.52093,127.13368],[37.52105,127.13372],[37.521,127.13371],[37.51977,127.13327],[37.51756,127.13187],[37.51668,127.1313],[37.51576,127.13066],[37.51264,127.12859],[37.51241,127.12821],[37.51226,127.12788],[37.51232,127.12713],[37.51322,127.12491],[37.51329,127.12476],[37.51335,127.12461],[37.51341,127.12446],[37.51348,127.12431],[37.51353,127.12418]],'10k':[[37.56625,126.89857],[37.56629,126.89932],[37.56593,126.90044],[37.56544,126.9016],[37.56406,126.903],[37.56265,126.90432],[37.5616,126.90524],[37.55886,126.90767],[37.55743,126.90893],[37.55487,126.91131],[37.55426,126.91186],[37.5526,126.91235],[37.55047,126.91299],[37.5492,126.91334],[37.54898,126.91264],[37.54848,126.91061],[37.54769,126.90915],[37.54381,126.90464],[37.54214,126.90275],[37.53905,126.90025],[37.53819,126.89944],[37.53697,126.89875],[37.53728,126.89979],[37.53678,126.9022],[37.53506,126.90566],[37.53359,126.90743],[37.53241,126.90855],[37.52793,126.90981],[37.52575,126.91096],[37.52612,126.91197],[37.52738,126.9114],[37.52811,126.91117],[37.52924,126.91081],[37.53082,126.91058],[37.53233,126.90989],[37.53238,126.91031],[37.53234,126.91076],[37.53204,126.91108],[37.52996,126.91182],[37.52749,126.91275],[37.52668,126.91334],[37.52614,126.91367],[37.52541,126.91435],[37.52484,126.915],[37.52326,126.91612],[37.52435,126.91789],[37.52681,126.92187],[37.52983,126.92675],[37.53015,126.92719],[37.52927,126.92923],[37.52894,126.92911],[37.52796,126.92739],[37.52744,126.9266]]}
+};
+const USE_SAVED_SETTINGS=false; /* true면 각자 브라우저에 저장한 값이 DEFAULTS보다 우선 */
+let cfg=Object.assign({},DEFAULTS),sdkTried=false;
+if(USE_SAVED_SETTINGS){try{Object.assign(cfg,JSON.parse(localStorage.getItem('crewcfg')||'{}'))}catch(e){}}
+let runners=[],demo=null,timerPoll=null,focusBib=null,labels=true,map=null;
+
+/* ================= 시간 유틸 ================= */
+const toS=s=>{const[a,b,c]=s.split(':').map(Number);return a*3600+b*60+c};
+const fmt=s=>{s=Math.max(0,Math.round(s));return[Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(n=>String(n).padStart(2,'0')).join(':')};
+function kstNow(){const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Seoul',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());return toS(p)}
+function now(){return demo?demo.t:kstNow()}
+
+/* ================= 코스 ================= */
+let route=[[37.5683,126.8972],[37.5600,126.9040],[37.5545,126.9095],[37.5440,126.9150],[37.5265,126.9245],[37.5180,126.9500],[37.5120,126.9800],[37.5100,127.0100],[37.5200,127.0400],[37.5230,127.0600],[37.5155,127.0730]];
+const COURSES={
+  full:{label:'Full',total:42.195,cpKm:40.72,route:route,base:route,cum:[],custom:false,dn:0,de:0},
+  '10k':{label:'10K',total:10,cpKm:7.3,route:null,base:null,cum:[],custom:false,dn:0,de:0}
+};
+['full','10k'].forEach(k=>{const r=DEFAULTS.routes&&DEFAULTS.routes[k];if(r&&r.length>1){COURSES[k].base=r;COURSES[k].route=r;COURSES[k].custom=true}});
+/* 코스별 체크포인트: 0, 5, 10, … , 마지막은 코스 총거리 */
+function cpList(cc){const T=COURSES[cc].total,a=[];for(let k=0;k<T-0.01;k+=5)a.push(k);a.push(T);return a}
+function hav(a,b){const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dg=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function pathLen(rt){const c=[0];for(let i=1;i<rt.length;i++)c.push(c[i-1]+hav(rt[i-1],rt[i]));return c}
+function posOn(c,km){ /* 코스 c 위의 km 지점 좌표 (공식 거리를 폴리라인 길이에 비례 배분) */
+  const d=Math.max(0,Math.min(c.total,km))/c.total*c.cum[c.cum.length-1],p=c.route;
+  let i=1;while(i<c.cum.length-1&&c.cum[i]<d)i++;
+  const t=(d-c.cum[i-1])/((c.cum[i]-c.cum[i-1])||1);
+  return[p[i-1][0]+(p[i][0]-p[i-1][0])*t,p[i-1][1]+(p[i][1]-p[i-1][1])*t];
+}
+function applyShift(c){ /* base 좌표를 북쪽 dn m, 동쪽 de m 만큼 옮김 */
+  const k=111195;
+  c.route=c.base.map(p=>[p[0]+c.dn/k,p[1]+c.de/(k*Math.cos(p[0]*Math.PI/180))]);
+  c.cum=pathLen(c.route);
+}
+function prep(){
+  const f=COURSES.full,t=COURSES['10k'];
+  applyShift(f);
+  if(!t.custom)t.base=Array.from({length:21},(_,i)=>posOn(f,i/20*10)); /* 10K GPX가 없으면 풀 코스 앞부분을 임시로 사용 */
+  applyShift(t);
+}
+function posAt(km,cc){return posOn(COURSES[cc||'full'],km)}
+
+/* ================= 카카오맵 ================= */
+const LL=p=>new kakao.maps.LatLng(p[0],p[1]);
+let routeObjs=[];
+function initMap(){
+  if(!cfg.key){$('ph').style.display='flex';return}
+  sdkTried=true;
+  $('ph').innerHTML='지도 불러오는 중…';
+  const s=document.createElement('script');
+  s.src=`https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(cfg.key)}&autoload=false`;
+  s.onerror=()=>{$('ph').innerHTML='카카오 지도 SDK를 불러오지 못했어요.<br>키가 올바른지, 네트워크/광고차단 설정을 확인해 주세요.'};
+  s.onload=()=>kakao.maps.load(()=>{
+    $('ph').remove();
+    map=new kakao.maps.Map($('map'),{center:new kakao.maps.LatLng(37.54,126.95),level:8});
+    map.addControl(new kakao.maps.ZoomControl(),kakao.maps.ControlPosition.RIGHT);
+    drawRoute();render();edBindMap();
+  });
+  document.head.appendChild(s);
+}
+function drawRoute(keep){
+  if(!map)return;
+  routeObjs.forEach(o=>o.setMap(null));routeObjs=[];
+  const b=new kakao.maps.LatLngBounds();
+  ['full','10k'].forEach(cc=>{
+    const c=COURSES[cc],is10=cc==='10k',cps=cpList(cc);
+    routeObjs.push(new kakao.maps.Polyline({map,path:c.route.map(LL),strokeWeight:is10?5:6,strokeColor:'#6b7280',strokeOpacity:.65,strokeStyle:'solid'}));
+    cps.forEach((k,i)=>{
+      const last=i===cps.length-1,nm=i===0?'출발':last?(is10?'10K':'도착'):k+'K';
+      routeObjs.push(new kakao.maps.CustomOverlay({map,position:LL(posAt(k,cc)),content:`<div class="cp ${last?'fin':''}">${nm}</div>`,yAnchor:1.4,zIndex:1}));
+    });
+    c.route.forEach(p=>b.extend(LL(p)));
+  });
+  if(!keep)map.setBounds(b);
+}
+function bindGpx(id,cc){
+  $(id).onchange=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    const x=new DOMParser().parseFromString(await f.text(),'text/xml');
+    const pts=[...x.querySelectorAll('trkpt,rtept')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]);
+    if(pts.length>1){COURSES[cc].base=pts;COURSES[cc].dn=0;COURSES[cc].de=0;COURSES[cc].custom=true;prep();drawRoute();render();if(typeof edRefresh==='function')edRefresh()}else alert('GPX에서 좌표를 찾지 못했어요');
+  };
+}
+bindGpx('gpx','full');bindGpx('gpx10','10k');
+
+/* ================= 데이터 파싱/조회 ================= */
+function parseSplits(text){
+  const out=[],re=/(출발|도착|\d+K)\s*[:\s]\s*(\d{1,2}:\d{2}:\d{2})/g;let m;
+  while((m=re.exec(text))){if(m[1] in KM_OF)out.push({km:KM_OF[m[1]],t:toS(m[2])})}
+  const seen={};return out.filter(s=>!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
+/* /api/event/{대회}/player/{배번} 의 JSON 응답에서 통과기록 추출 (구조가 달라도 최대한 읽음) */
+function parseRecords(o){
+  const recs=o.records||(o.player&&o.player.records)||[];
+  const out=[];
+  recs.forEach(x=>{
+    if(!x||!x.time_point)return;
+    const nm=x.point&&x.point.name;
+    let km=(nm in KM_OF)?KM_OF[nm]:Number(x.point&&x.point.distance);
+    if(!(km>=0))return;
+    if(km>42)km=TOTAL;
+    out.push({km,t:toS(x.time_point)});
+  });
+  const seen={};return out.filter(s=>!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
+function htmlText(h){return h.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ')}
+function parseAny(txt){
+  try{return parseRecords(JSON.parse(txt))}catch(e){}
+  return parseSplits(htmlText(txt)); /* 공개 기록 페이지 HTML: 태그를 공백으로 바꾼 뒤 구간/시각 쌍 추출 */
+}
+function batchUrl(bibs,c){
+  c=c||cfg;
+  return `${String(c.worker).replace(/\/+$/,'')}/?event=${encodeURIComponent(c.evt)}&bibs=${bibs.map(encodeURIComponent).join(',')}`;
+}
+function normSplits(r,raw){
+  /* 워커: 도착=-1, 체크포인트=-2 → 이 러너 코스의 거리로 변환 */
+  const T=COURSES[r.course].total,seen={};
+  const fin=raw.find(s=>s.km===-1),cps=raw.filter(s=>s.km===-2),base=raw.filter(s=>s.km>=0);
+  const out=raw.filter(s=>s.km>=0||s.km===-1).map(s=>s.km===-1?{km:T,t:s.t}:s);
+  if(cps.length===1&&COURSES[r.course].cpKm){ /* 10K 체크포인트·풀 반환점: 위치를 모르므로 직전 구간~도착을 일정 페이스로 보고 추정 (도착 전이면 기본 위치 cpKm) */
+    const cp=cps[0],prev=base.filter(s=>s.t<cp.t).pop();
+    let km=COURSES[r.course].cpKm;
+    if(prev&&fin&&fin.t>prev.t)km=prev.km+(cp.t-prev.t)/(fin.t-prev.t)*(T-prev.km);
+    out.push({km:Math.round(km*100)/100,t:cp.t});
+  }
+  return out.filter(s=>s.km<=T+0.01&&!seen[s.km]&&(seen[s.km]=1)).sort((a,b)=>a.km-b.km);
+}
+async function fetchBatch(list){
+  try{
+    const res=await fetch(batchUrl(list.map(r=>r.bib)));
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const j=await res.json();
+    list.forEach(r=>{
+      const o=j.runners&&j.runners[r.bib];
+      if(!o){r.err='응답 없음';return}
+      if(o.err){r.err=o.err;return}
+      if(o.splits&&o.splits.length)r.splits=normSplits(r,o.splits);
+      r.err=null;
+    });
+  }catch(e){list.forEach(r=>r.err=e.message||'실패')}
+}
+let polling=false;
+async function pollAll(){
+  if(demo||polling)return;
+  if(!cfg.worker){$('stat').textContent='워커 주소를 설정하세요';return}
+  polling=true;
+  $('stat').textContent='갱신 중…';
+  for(let i=0;i<runners.length;i+=40)await fetchBatch(runners.slice(i,i+40));
+  polling=false;render();
+  const bad=runners.filter(r=>r.err).length;
+  $('stat').textContent=`마지막 갱신 ${fmt(kstNow())}`+(bad?` · 실패 ${bad}명`:'');
+}
+function startPolling(){
+  clearInterval(timerPoll);
+  if(demo)return;
+  pollAll();timerPoll=setInterval(pollAll,Math.max(30,+cfg.intv)*1000);
+}
+
+/* ================= 위치 추정 ================= */
+function kmLabel(k){ /* 5의 배수는 '40K', 하프는 'Half', 그 외는 소수 첫째 자리 */
+  if(Math.abs(k-Math.round(k))<0.01)return Math.round(k)+'K';
+  if(Math.abs(k-21.0975)<0.01)return 'Half';
+  return k.toFixed(1)+'K';
+}
+function estimate(r,t){
+  const T=COURSES[r.course].total;
+  const known=r.splits.filter(s=>s.t<=t);
+  if(!known.length)return{km:0,state:'출발 전',conf:'wait'};
+  const last=known[known.length-1];
+  if(last.km>=T-0.01){const st=r.splits[0].km===0?r.splits[0].t:null;return{km:T,state:'완주'+(st?' '+fmt(last.t-st):''),conf:'done',last}}
+  let pace;
+  if(known.length>=2){
+    const a=known[known.length-2],b=known[known.length-1];
+    const p1=(b.t-a.t)/(b.km-a.km);
+    if(known.length>=3){const c=known[known.length-3];const p0=(a.t-c.t)/(a.km-c.km);pace=p1*.7+p0*.3}else pace=p1;
+  }else pace=r.pace0||cfg.dpace*60; /* 측정 구간이 없으면 러너별 예상 페이스 → 없으면 기본 페이스 */
+  const nextKm=cpList(r.course).find(k=>k>last.km+0.01)||T;
+  let km=last.km+(t-last.t)/pace;
+  const stall=km>nextKm-0.05;km=Math.min(km,nextKm-0.05);
+  return{km,pace,last,state:(last.km?kmLabel(last.km):'출발')+' 통과 '+fmt(last.t)+(known.length<2?(r.pace0?' · 예상페이스':' · 기본페이스'):''),conf:stall?'stall':'est'};
+}
+
+/* ================= 렌더링 ================= */
+const mk=new Map();
+function focusRunner(bib){
+  focusBib=String(bib);
+  const o=mk.get(focusBib);
+  if(map&&o){if(map.getLevel()>4)map.setLevel(4);map.panTo(o.getPosition())}
+  render();
+}
+function render(){
+  const t=now();$('clk').textContent=fmt(t)+(demo?' (데모)':'');
+  const rows=runners.map(r=>({r,e:estimate(r,t)}));
+  if(map){
+    rows.forEach(({r,e})=>{
+      const pos=LL(posAt(e.km,r.course));
+      const ck=e.conf+(focusBib===r.bib?'h':'')+r.name;
+      let o=mk.get(r.bib);
+      const html=`<div class="mk ${e.conf==='est'?'est':''} ${focusBib===r.bib?'hl':''}" onclick="focusRunner('${r.bib}')"><i style="background:${r.color}"></i><span>${r.name}</span></div>`;
+      if(!o){o=new kakao.maps.CustomOverlay({map,position:pos,content:html,xAnchor:.1,yAnchor:.5,zIndex:10,clickable:true});mk.set(r.bib,o);r._ck=ck}
+      else{o.setPosition(pos);if(r._ck!==ck){o.setContent(html);r._ck=ck}}
+      o.setZIndex(focusBib===r.bib?20:10);
+    });
+  }
+  rows.sort((a,b)=>b.e.km-a.e.km);
+  $('list').innerHTML=rows.map(({r,e})=>{
+    const pc=e.pace?`${Math.floor(e.pace/60)}:${String(Math.round(e.pace%60)).padStart(2,'0')}/km`:'-';
+    const tg=r.err&&!r.splits.length?['err','조회실패']:({wait:['','대기'],est:['on','추정중'],stall:['','신호대기'],done:['','완주']})[e.conf];
+    return`<div class="ri" data-b="${r.bib}"><span class="dot" style="background:${r.color}"></span>
+    <div><div class="nm">${r.name} <span class="mu">#${r.bib} · ${COURSES[r.course].label}${r.demoSynth?' · 가상기록('+(r.demoWhy||'')+')':''}</span></div><div class="mu">${(r.err&&!r.splits.length)?('오류: '+r.err):(e.state+' · '+e.km.toFixed(1)+'km · '+pc)}</div></div>
+    <span class="tag ${tg[0]}">${tg[1]}</span></div>`}).join('')||'<div class="ri mu">설정에서 크루를 추가하세요</div>';
+  document.querySelectorAll('.ri[data-b]').forEach(el=>el.onclick=()=>focusRunner(el.dataset.b));
+}
+setInterval(render,1000);
+
+/* ================= 크루 구성 ================= */
+/* '5:30' / "5'30" → 330 (초/km), 형식이 아니면 null */
+function parsePace(s){const m=/^(\d{1,2})\s*[:'’]\s*(\d{1,2})$/.exec((s||'').trim());return m?(+m[1])*60+(+m[2]):null}
+function loadCrew(){
+  mk.forEach(o=>o.setMap(null));mk.clear();
+  const old=Object.fromEntries(runners.map(r=>[r.bib,r]));
+  runners=cfg.crew.split('\n').map(l=>l.trim()).filter(Boolean).map((l,i)=>{
+    const[n,b,c,p]=l.split(/[,\t]/).map(s=>s.trim());const bib=b||n,name=b?n:('#'+n),course=/10/.test(c||'')?'10k':'full',pace0=parsePace(p);
+    return old[bib]?Object.assign(old[bib],{name,course,pace0,_ck:null}):{name,bib,course,pace0,splits:[],color:`hsl(${(i*137.5)%360} 75% 45%)`,err:null};
+  });
+}
+
+/* ================= 데모 ================= */
+const SAMPLE='출발 08:24:06 5K 08:53:13 10K 09:22:17 15K 09:50:50 20K 10:19:09 25K 10:49:05 30K 11:20:43 35K 11:57:24 40K 12:36:12 도착 12:50:50';
+let demoLoading=false;
+async function startDemo(){
+  if(demoLoading)return;demoLoading=true;
+  clearInterval(timerPoll);if(demo){clearInterval(demo.iv);demo=null}
+  $('stat').textContent='데모: 크루의 실제 기록을 불러오는 중…';
+  runners.forEach(r=>{r.splits=[];r.err=null;r.demoSynth=false});
+  /* 1) 워커로 각자의 실제 기록 조회 (40명씩) */
+  if(cfg.worker)for(let i=0;i<runners.length;i+=40)await fetchBatch(runners.slice(i,i+40));
+  /* 2) 실제 기록이 없는 러너는 예상 페이스로 만든 가상 기록으로 채움 */
+  let real=0,synth=0;
+  runners.forEach((r,i)=>{
+    if(r.splits.length>=2){real++;r.err=null;return}
+    r.demoWhy=r.err?('조회 오류: '+r.err):(r.splits.length?'구간 기록 1개뿐':'기록 없음');
+    const pace=r.pace0||cfg.dpace*60,start=toS('08:24:06')+((i*13)%240);
+    r.splits=cpList(r.course).map(k=>({km:k,t:Math.round(start+pace*k)}));
+    r.err=null;r.demoSynth=true;synth++;
+  });
+  /* 3) 가상 시계: 가장 이른 출발 3분 전부터 마지막 도착 1분 뒤까지 100배속 반복 재생 */
+  const tmin=Math.min(...runners.map(r=>r.splits[0].t))-180,tmax=Math.max(...runners.map(r=>r.splits[r.splits.length-1].t))+60;
+  demo={t:tmin};
+  demo.iv=setInterval(()=>{if(demo){demo.t+=50;if(demo.t>tmax)demo.t=tmin}},500);
+  $('stat').textContent=`데모: 실제 기록 ${real}명`+(synth?` · 가상 기록 ${synth}명(예상 페이스)`:'')+' · 100배속 반복';
+  demoLoading=false;$('demo').textContent='데모 종료';render();
+}
+
+/* ================= UI ================= */
+function fill(){
+  $('crew').value=cfg.crew;
+}
+function persist(){if(USE_SAVED_SETTINGS){try{localStorage.setItem('crewcfg',JSON.stringify(cfg))}catch(e){}}}
+$('cfg').onclick=()=>{fill();$('dlg').showModal()};
+$('close').onclick=()=>$('dlg').close();
+$('save').onclick=()=>{
+  cfg=Object.assign({},cfg,{crew:$('crew').value}); /* 키·워커·대회번호·갱신주기는 DEFAULTS 값 유지 */
+  persist();
+  if(cfg.key&&!map&&!sdkTried)initMap();
+  if(demo)endDemo();
+  loadCrew();$('dlg').close();render();startPolling();
+};
+function endDemo(){ /* 데모 상태 정리 (가상 시계·가상/조회 기록 제거) */
+  if(demo)clearInterval(demo.iv);demo=null;
+  runners.forEach(r=>{r.splits=[];r.demoSynth=false;r.err=null});
+  $('demo').textContent='데모 재생';
+}
+$('demo').onclick=()=>{
+  if(demoLoading)return;
+  if(demo){endDemo();$('stat').textContent='';render();startPolling();return} /* 재생 중이면 종료하고 실제 조회로 복귀 */
+  $('demo').textContent='불러오는 중…';
+  startDemo();
+};
+function makeDefaults(crew,dpace){
+  const smp=a=>{const st=Math.ceil(a.length/400);return a.length>400?a.filter((_,i)=>i%st===0||i===a.length-1):a};
+  const rtOf=cc=>{const c=COURSES[cc];return (c.custom||c.dn||c.de)?JSON.stringify(smp(c.route).map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)])):'null'};
+  const rt=`{full:${rtOf('full')},'10k':${rtOf('10k')}}`;
+  return `const DEFAULTS={\n  key:${JSON.stringify(cfg.key)},\n  worker:${JSON.stringify(cfg.worker)},\n  evt:${JSON.stringify(cfg.evt)},\n  intv:${cfg.intv},\n  dpace:${dpace},\n  crew:${JSON.stringify(crew)},\n  routes:${rt}\n};`;
+}
+async function copyText(code,out,msg){
+  out.style.display='block';
+  try{await navigator.clipboard.writeText(code);out.textContent=msg+'\n\n'+code}
+  catch(e){out.textContent='자동 복사에 실패했어요. 아래 내용을 직접 복사하세요.\n\n'+code}
+}
+const COPYMSG='복사됨! index.html의 const DEFAULTS={…}; 부분을 아래 내용으로 교체하세요.';
+$('copydef').onclick=()=>copyText(makeDefaults($('crew').value,cfg.dpace),$('testout'),COPYMSG);
+
+/* 코스 위치 보정 패널 */
+function showOff(){['10k','full'].forEach(cc=>{const c=COURSES[cc];$('off-'+cc).textContent=`북 ${c.dn}m · 동 ${c.de}m`})}
+function shiftCourse(cc,d){
+  if(ed.on&&ed.cc===cc){$('edinfo').textContent='편집 중에는 위치 이동 버튼을 쓸 수 없어요. 편집을 끝낸 뒤 사용하세요.';return}
+  const s=+$('shstep').value,c=COURSES[cc];
+  if(d==='n')c.dn+=s;if(d==='s')c.dn-=s;if(d==='e')c.de+=s;if(d==='w')c.de-=s;
+  prep();drawRoute(true);render();showOff();
+}
+document.querySelectorAll('#adj .adjrow button').forEach(b=>b.onclick=()=>shiftCourse(b.parentElement.dataset.c,b.dataset.d));
+$('adjbtn').onclick=()=>{const a=$('adj');a.style.display=a.style.display==='none'?'block':'none';showOff()};
+$('adjreset').onclick=()=>{['full','10k'].forEach(cc=>{COURSES[cc].dn=0;COURSES[cc].de=0});prep();drawRoute(true);render();showOff()};
+$('adjcopy').onclick=()=>copyText(makeDefaults(cfg.crew,cfg.dpace),$('adjout'),COPYMSG);
+
+/* ===== 경로 편집 (GPX 수정 후 다시 내려받기) ===== */
+const ed={on:false,cc:'10k',mode:'move',hist:[],marks:[],line:null,last:0};
+const EDICON='data:image/svg+xml;utf8,'+encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18'><circle cx='9' cy='9' r='6.5' fill='white' stroke='#e8421f' stroke-width='3'/></svg>");
+function edInfo(){const c=COURSES[ed.cc],L=pathLen(c.base)[c.base.length-1];$('edinfo').textContent=`점 ${c.base.length}개 · 총 길이 ${L.toFixed(2)}km (공식 ${c.total}km)`}
+function edSnap(){ed.hist.push(JSON.stringify(COURSES[ed.cc].base));if(ed.hist.length>60)ed.hist.shift()}
+function edCommit(){prep();drawRoute(true);render();edInfo()}
+function edClear(){ed.marks.forEach(m=>m.setMap(null));ed.marks=[];if(ed.line){ed.line.setMap(null);ed.line=null}}
+function edRefresh(){if(ed.on)edBuild()}
+function edBuild(){
+  edClear();if(!map||!ed.on)return;
+  const c=COURSES[ed.cc];
+  ed.line=new kakao.maps.Polyline({map,path:c.base.map(LL),strokeWeight:3,strokeColor:'#e8421f',strokeOpacity:.9,zIndex:5});
+  c.base.forEach((p,i)=>{
+    /* 카카오 마커에는 '드래그 중' 이벤트가 없어서, 점을 직접 만들어 포인터 이벤트로 끌기를 처리 */
+    const el=document.createElement('div');
+    el.style.cssText='width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid #e8421f;box-sizing:border-box;touch-action:none;cursor:'+(ed.mode==='move'?'grab':ed.mode==='del'?'pointer':'crosshair');
+    const ov=new kakao.maps.CustomOverlay({map,position:LL(p),content:el,xAnchor:.5,yAnchor:.5,zIndex:20,clickable:true});
+    let drag=false;
+    el.onpointerdown=e=>{
+      e.stopPropagation();e.preventDefault();ed.last=Date.now();
+      if(ed.mode==='del'){if(c.base.length>2){edSnap();c.base.splice(i,1);edBuild();edCommit()}return}
+      if(ed.mode!=='move')return;
+      drag=true;edSnap();map.setDraggable(false);
+      try{el.setPointerCapture(e.pointerId)}catch(_){}
+    };
+    el.onpointermove=e=>{
+      if(!drag)return;
+      try{
+        const r=$('map').getBoundingClientRect();
+        const ll=map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(e.clientX-r.left,e.clientY-r.top));
+        c.base[i]=[ll.getLat(),ll.getLng()];
+        ov.setPosition(ll);ed.line.setPath(c.base.map(LL));
+        prep();render();edInfo(); /* 크루 마커와 길이도 실시간 갱신 */
+      }catch(err){$('edinfo').textContent='점 이동 실패: '+err.message}
+    };
+    const end=()=>{if(!drag)return;drag=false;map.setDraggable(true);edCommit()};
+    el.onpointerup=end;el.onpointercancel=end;
+    ed.marks.push(ov);
+  });
+  edInfo();
+}
+function nearestSeg(b,q){ /* 점 q(위도,경도)에서 가장 가까운 선분 번호 */
+  const kx=Math.cos(q[0]*Math.PI/180);let bi=0,bd=Infinity;
+  for(let i=0;i<b.length-1;i++){
+    const ax=b[i][1]*kx,ay=b[i][0],dx=b[i+1][1]*kx-ax,dy=b[i+1][0]-ay,px=q[1]*kx,py=q[0];
+    const t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy||1)));
+    const d=(ax+dx*t-px)**2+(ay+dy*t-py)**2;
+    if(d<bd){bd=d;bi=i}
+  }
+  return bi;
+}
+function edBindMap(){
+  kakao.maps.event.addListener(map,'click',e=>{
+    if(!ed.on||ed.mode!=='add'||Date.now()-ed.last<300)return;
+    ed.last=Date.now();
+    const q=[e.latLng.getLat(),e.latLng.getLng()],b=COURSES[ed.cc].base;
+    edSnap();b.splice(nearestSeg(b,q)+1,0,q);edBuild();edCommit();
+  });
+}
+$('edtoggle').onclick=()=>{
+  if(!ed.on){
+    if(!map){$('edinfo').textContent='지도가 아직 준비되지 않았어요.';return}
+    ed.cc=$('edcc').value;const c=COURSES[ed.cc];
+    c.base=c.route.map(p=>[p[0],p[1]]);c.dn=0;c.de=0;c.custom=true; /* 지금 보이는 위치(이동량 포함)를 기준 좌표로 확정 */
+    ed.on=true;ed.hist=[];showOff();
+    $('edtoggle').textContent='편집 끝내기';$('edtools').style.display='block';$('edcc').disabled=true;
+    edBuild();
+  }else{
+    ed.on=false;edClear();
+    $('edtoggle').textContent='편집 시작';$('edtools').style.display='none';$('edcc').disabled=false;
+    $('edinfo').textContent='편집 내용은 새로고침하면 사라져요. "GPX 내려받기" 또는 "DEFAULTS 복사"로 저장하세요.';
+  }
+};
+document.querySelectorAll('input[name=edmode]').forEach(r=>r.onchange=()=>{ed.mode=r.value;edBuild()});
+$('edundo').onclick=()=>{if(!ed.hist.length)return;COURSES[ed.cc].base=JSON.parse(ed.hist.pop());edBuild();edCommit()};
+$('edgpx').onclick=()=>{ /* 지금 지도에 표시된 경로를 GPX로 저장 */
+  const cc=$('edcc').value,c=COURSES[cc],nm='JTBC 서울마라톤 '+c.label+' (편집)';
+  const rows=c.route.map(p=>`      <trkpt lat="${p[0].toFixed(6)}" lon="${p[1].toFixed(6)}"></trkpt>`).join('\n');
+  const gpx=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="crew-tracker" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${nm}</name></metadata>\n  <trk>\n    <name>${nm}</name>\n    <trkseg>\n${rows}\n    </trkseg>\n  </trk>\n</gpx>\n`;
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));
+  a.download=`jtbc-${cc}-edited.gpx`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  $('edinfo').textContent=`${a.download} 저장을 시작했어요 (점 ${c.route.length}개)`;
+};
+$('refresh').onclick=()=>{if(!demo)pollAll()};
+$('lbl').onclick=()=>{labels=!labels;$('map').classList.toggle('lbl-off',!labels);$('lbl').textContent=labels?'이름 숨기기':'이름 표시'};
+$('dlg').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close()});
+
+if(/[?&]dev(=|&|$)/.test(location.search))document.body.classList.add('dev'); /* 주소 뒤에 ?dev=1 → 숨긴 도구 표시 */
+prep();loadCrew();render();initMap();
+if(cfg.crew.trim())startPolling();
+if(!cfg.crew.trim()){fill();$('dlg').showModal()}
+</script>
+</body>
+</html>
