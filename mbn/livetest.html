@@ -83,7 +83,8 @@ function desc(o){
   const sp=o.splits||[];
   if(!sp.length)return{key:'NONE',status:'none',n:0,text:'기록 없음 (경기 전·경기 중 미공개)'};
   const text=sp.map(s=>`${s.km}k ${fmt(s.el)}${s.tod!=null?' / '+fmt(s.tod):''}`).join(' · ');
-  return{key:JSON.stringify(sp),status:'ok',n:sp.length,text:text+(o.src?`  [${o.src}]`:'')};
+  const who=o.info?`  {${o.info.name} · ${o.info.course}}`:'  {이름 정보 없음}';
+  return{key:JSON.stringify(sp),status:'ok',n:sp.length,text:text+(o.src?`  [${o.src}]`:'')+who};
 }
 async function pollOnce(){
   if(busy)return;
