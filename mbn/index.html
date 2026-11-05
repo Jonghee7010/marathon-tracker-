@@ -238,7 +238,9 @@ async function fetchBatch(list){
     list.forEach(r=>{
       const o=j.runners&&j.runners[r.bib];
       if(!o){r.err='응답 없음';return}
-      if(o.info)r.sc=o.info; /* SmartChip 등록 이름·코스 (명단 확인용) */
+      if(o.info)r.sc=o.info; /* SmartChip 등록 이름·코스 (명단 확인용, 대회 전에도 나옴) */
+      if(o.points)r.pts=o.points; /* 실제 측정 지점(매트) 위치 */
+      if(o.status==='notfound'){r.err='등록되지 않은 배번';r.splits=[];r.netOnly=null;r.sc=null;return}
       if(o.err){r.err=o.err;return}
       r.splits=o.splits&&o.splits.length?toSplits(r,o.splits):[];
       if(!(o.splits&&o.splits.length))r.netOnly=null;
@@ -290,8 +292,8 @@ function estimate(r,t){
     const p1=(b.t-a.t)/(b.km-a.km);
     if(known.length>=3){const c=known[known.length-3];const p0=(a.t-c.t)/(a.km-c.km);pace=p1*.7+p0*.3}else pace=p1;
   }else pace=r.pace0||cfg.dpace*60; /* 측정 구간이 없으면 러너별 예상 페이스 → 없으면 기본 페이스 */
-  /* 다음 측정 지점(모르면 다음 5km 지점) 50m 앞에서 멈춤 */
-  const nextKm=cpList(r.course).find(k=>k>last.km+0.01)||T;
+  /* 다음 측정 지점(SmartChip 매트 위치, 모르면 다음 5km 지점) 50m 앞에서 멈춤 */
+  const nextKm=(r.pts&&r.pts.length?r.pts.concat(T):cpList(r.course)).find(k=>k>last.km+0.01)||T;
   let km=last.km+(t-last.t)/pace;
   const stall=km>nextKm-0.05;km=Math.min(km,nextKm-0.05);
   return{km,pace,last,state:(last.km?kmLabel(last.km)+' 통과 '+fmt(last.t):'출발 '+fmt(last.t))+(known.length<2?(r.pace0?' · 예상페이스':' · 기본페이스'):''),conf:stall?'stall':'est'};
