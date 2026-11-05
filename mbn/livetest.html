@@ -45,6 +45,12 @@ tr.chg td{background:color-mix(in srgb,var(--ok) 12%,transparent)}
       <div><label>조회 간격 (분, 최소 1)</label><input id="every" type="number" min="1" value="3"></div>
     </div>
     <div class="row">
+      <span class="mu">이번 주말 SmartChip 대회:</span>
+      <button class="g preset" data-evt="202650000329">토 11/7 영천댐 마라톤</button>
+      <button class="g preset" data-evt="202650000338">일 11/8 해남 땅끝 마라톤</button>
+      <span class="mu">(배번은 번호대별로 고르게 넣어 둠 — 실제로 있는 번호만 기록이 생겨요)</span>
+    </div>
+    <div class="row">
       <button id="start">테스트 시작</button>
       <button class="g" id="once">지금 한 번 조회</button>
       <button class="g" id="csv">로그 CSV 내려받기</button>
@@ -146,6 +152,13 @@ $('csv').onclick=()=>{
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download=`smartchip-livetest-${$('evt').value||'x'}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500);
 };
+const TEST_BIBS='1, 2, 3, 10, 50, 100, 101, 200, 500, 1001, 1002, 1500, 2001, 2002, 3001, 3002, 5001, 7001, 10001, 20001';
+document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>{
+  $('evt').value=b.dataset.evt;$('bibs').value=TEST_BIBS;st.evt=$('evt').value;st.bibs=TEST_BIBS;
+  if(st.lastEvt!==st.evt){st.log=[];st.last={};st.lastEvt=st.evt}save();draw();
+  $('stat').textContent=b.textContent+' 설정됨 · 테스트 시작을 누르세요';
+});
+if(!st.evt){$('evt').value='202650000329';$('bibs').value=TEST_BIBS}
 draw();
 </script>
 </body>
