@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartChip 실시간 기록 테스트</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1a1d23;--mu:#6b7280;--bd:#e3e6ea;--ac:#e8421f;--ok:#16a34a}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2026;--tx:#eceef1;--mu:#98a0ab;--bd:#2d3139;--ac:#ff6a47;--ok:#22c55e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;font-size:14px}
+main{max-width:980px;margin:0 auto;padding:14px}
+h1{font-size:18px;margin:0 0 4px}
+.mu{color:var(--mu);font-size:12px;line-height:1.6}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+label{display:block;font-weight:600;font-size:13px;margin-bottom:4px}
+input{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+#verdict{font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mu);font-weight:600;font-size:12px}
+tr.chg td{background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.pill{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--bd);color:var(--mu)}
+.pill.ok{border-color:var(--ok);color:var(--ok)}
+.pill.err{border-color:#c00;color:#c00}
+.sum td:first-child{font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <h1>SmartChip 실시간 기록 테스트</h1>
+  <div class="mu">경기 <b>중</b>에 켜 두면, 지정한 배번의 구간 기록이 통과할 때마다 채워지는지 기록합니다.
+    워커(<code>worker.js</code>)를 거쳐 조회하므로 실제 트래커와 같은 경로를 시험합니다. 이 탭을 열어 둔 동안만 동작해요(PC 절전 해제 권장).</div>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>워커 주소</label><input id="worker" value="https://marathon-proxy.whdgmlwld.workers.dev"></div>
+      <div><label>대회 코드 (usedata 12자리)</label><input id="evt" placeholder="202650000xxx" inputmode="numeric"></div>
+      <div><label>배번 (쉼표 구분, 최대 50)</label><input id="bibs" placeholder="101, 205, 330"></div>
+      <div><label>조회 간격 (분, 최소 1)</label><input id="every" type="number" min="1" value="3"></div>
+    </div>
+    <div class="row">
+      <button id="start">테스트 시작</button>
+      <button class="g" id="once">지금 한 번 조회</button>
+      <button class="g" id="csv">로그 CSV 내려받기</button>
+      <button class="g" id="clear">로그 지우기</button>
+      <span class="mu" id="stat"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="verdict" class="mu">아직 결과가 없어요.</div>
+    <div class="mu" style="margin-top:4px">판정 기준: 경기 중에 같은 배번의 측정 지점 수가 늘어나면 <b>실시간 공개 OK</b>.
+      계속 “기록 없음”이다가 완주 뒤에야 한꺼번에 생기면 <b>실시간 미공개</b>.</div>
+    <table class="sum" style="margin-top:8px"><thead><tr><th>배번</th><th>현재 상태</th><th>지점 수 변화</th><th>마지막 변화</th></tr></thead><tbody id="sum"></tbody></table>
+  </div>
+
+  <div class="card">
+    <b>조회 로그</b> <span class="mu">(바뀐 줄은 초록색 · 최근 순)</span>
+    <table style="margin-top:6px"><thead><tr><th>시각</th><th>배번</th><th>상태</th><th>측정 지점 (넷타임 / 통과 시각)</th></tr></thead><tbody id="log"></tbody></table>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const BATCH=10, LS='sc-livetest';
+const fmt=s=>s==null?'-':[Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(n=>String(Math.floor(n)).padStart(2,'0')).join(':');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+let st=JSON.parse(localStorage.getItem(LS)||'{}');
+st.log=st.log||[];st.last=st.last||{};
+['worker','evt','bibs','every'].forEach(k=>{if(st[k]!=null)$(k).value=st[k];$(k).onchange=()=>{st[k]=$(k).value;save()}});
+function save(){localStorage.setItem(LS,JSON.stringify(st))}
+let timer=null,busy=false;
+
+function desc(o){
+  if(!o)return{key:'응답 없음',status:'err',n:0,text:'응답 없음'};
+  if(o.err)return{key:'ERR '+o.err,status:'err',n:0,text:o.err};
+  const sp=o.splits||[];
+  if(!sp.length)return{key:'NONE',status:'none',n:0,text:'기록 없음 (경기 전·경기 중 미공개)'};
+  const text=sp.map(s=>`${s.km}k ${fmt(s.el)}${s.tod!=null?' / '+fmt(s.tod):''}`).join(' · ');
+  return{key:JSON.stringify(sp),status:'ok',n:sp.length,text:text+(o.src?`  [${o.src}]`:'')};
+}
+async function pollOnce(){
+  if(busy)return;
+  const w=$('worker').value.trim().replace(/\/+$/,''),ev=$('evt').value.trim();
+  const bibs=[...new Set($('bibs').value.split(/[,\s]+/).map(s=>s.trim()).filter(Boolean))].slice(0,50);
+  if(!/^https?:\/\//.test(w)){$('stat').textContent='워커 주소를 넣어 주세요';return}
+  if(!/^\d{12}$/.test(ev)){$('stat').textContent='usedata는 12자리 숫자예요';return}
+  if(!bibs.length){$('stat').textContent='배번을 넣어 주세요';return}
+  busy=true;$('stat').textContent='조회 중…';
+  const ts=new Intl.DateTimeFormat('en-GB',{hour12:false,timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date());
+  for(let i=0;i<bibs.length;i+=BATCH){
+    const part=bibs.slice(i,i+BATCH);let j=null,fail=null;
+    try{
+      const r=await fetch(`${w}/?event=${ev}&bibs=${part.map(encodeURIComponent).join(',')}`);
+      j=await r.json().catch(()=>null);
+      if(!r.ok)fail=(j&&j.error)||('HTTP '+r.status);
+    }catch(e){fail='워커 연결 실패: '+e.message}
+    part.forEach(b=>{
+      const d=fail?{key:'ERR '+fail,status:'err',n:0,text:fail}:desc(j.runners&&j.runners[b]);
+      const prev=st.last[b];
+      const chg=!prev||prev.key!==d.key;
+      const hist=(prev&&prev.hist)||[];
+      if(chg&&d.status!=='err')hist.push({t:ts,n:d.n});
+      st.last[b]={key:d.key,status:d.status,n:d.n,text:d.text,hist,changedAt:chg?ts:(prev&&prev.changedAt)};
+      st.log.unshift({t:ts,b,status:d.status,n:d.n,text:d.text,chg});
+    });
+  }
+  st.log=st.log.slice(0,3000);save();busy=false;
+  $('stat').textContent=`마지막 조회 ${ts}`+(timer?` · ${$('every').value}분마다 자동 조회 중`:'');
+  draw();
+}
+function draw(){
+  const L=Object.entries(st.last);
+  $('sum').innerHTML=L.map(([b,v])=>{
+    const seq=(v.hist||[]).map(h=>h.n);
+    return `<tr><td>#${esc(b)}</td><td><span class="pill ${v.status==='ok'?'ok':v.status==='err'?'err':''}">${v.status==='ok'?'기록 '+v.n+'개':v.status==='err'?'오류':'기록 없음'}</span> <span class="mu">${esc(v.text)}</span></td><td>${seq.length?esc(seq.join(' → ')):'-'}</td><td>${esc(v.changedAt||'-')}</td></tr>`;
+  }).join('');
+  /* 판정: 지점 수가 1 이상에서 더 늘어난 배번이 있으면 실시간 OK */
+  const grew=L.filter(([,v])=>{const s=(v.hist||[]).map(h=>h.n).filter(n=>n>0);return s.length>=2&&s[s.length-1]>s[0]});
+  const any=L.filter(([,v])=>v.status==='ok');
+  const err=L.filter(([,v])=>v.status==='err');
+  $('verdict').className='';
+  $('verdict').textContent=grew.length?`✅ 실시간 공개 확인: ${grew.length}명의 측정 지점이 경기 중에 늘어났어요.`
+    :any.length?`⏳ 기록은 보이지만 아직 늘어나는 걸 못 봤어요 (${any.length}명). 계속 켜 두세요. 처음부터 완주 기록 전체가 한꺼번에 보였다면 완주 후 공개일 수 있어요.`
+    :err.length&&err.length===L.length?'⚠️ 모두 오류예요. 워커 주소·usedata를 확인하세요.'
+    :L.length?'⏳ 아직 기록 없음. 출발 후 첫 측정 지점을 지날 때까지 기다려 보세요.':'아직 결과가 없어요.';
+  $('log').innerHTML=st.log.slice(0,400).map(x=>`<tr class="${x.chg?'chg':''}"><td>${esc(x.t)}</td><td>#${esc(x.b)}</td><td><span class="pill ${x.status==='ok'?'ok':x.status==='err'?'err':''}">${x.status==='ok'?x.n+'개':x.status==='err'?'오류':'없음'}</span></td><td class="mu">${esc(x.text)}</td></tr>`).join('');
+}
+$('start').onclick=()=>{
+  if(timer){clearInterval(timer);timer=null;$('start').textContent='테스트 시작';$('stat').textContent='멈춤';return}
+  const m=Math.max(1,+$('every').value||3);$('every').value=m;st.every=m;save();
+  timer=setInterval(pollOnce,m*60000);$('start').textContent='테스트 멈춤';pollOnce();
+};
+$('once').onclick=pollOnce;
+$('clear').onclick=()=>{if(confirm('로그를 모두 지울까요?')){st.log=[];st.last={};save();draw()}};
+$('csv').onclick=()=>{
+  const rows=[['time','bib','status','points','detail']].concat(st.log.slice().reverse().map(x=>[x.t,x.b,x.status,x.n,x.text]));
+  const csv='﻿'+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`smartchip-livetest-${$('evt').value||'x'}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+};
+draw();
+</script>
+</body>
+</html>
